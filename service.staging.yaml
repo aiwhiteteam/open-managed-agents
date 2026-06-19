@@ -1,0 +1,32 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: open-managed-agents-staging
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+    spec:
+      containerConcurrency: 20
+      timeoutSeconds: 3600
+      containers:
+        - image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APP_ENV
+              value: staging
+            - name: OMA_RUNTIME_BACKEND
+              value: auto
+            - name: OMA_REQUIRE_BETA_HEADER
+              value: "true"
+            - name: OMA_REQUIRE_ANTHROPIC_VERSION_HEADER
+              value: "true"
+            - name: RUN_MIGRATIONS
+              value: "true"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi

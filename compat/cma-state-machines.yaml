@@ -1,0 +1,35 @@
+sessions:
+  states:
+    - idle
+    - running
+    - error
+    - terminated
+    - deleted
+  transitions:
+    - from: idle
+      to: running
+      trigger: user event appended
+    - from: running
+      to: idle
+      trigger: runtime completed turn
+    - from: running
+      to: error
+      trigger: runtime raised exception
+    - from: idle
+      to: terminated
+      trigger: cancel
+    - from: running
+      to: terminated
+      trigger: cancel requested
+    - from: any
+      to: deleted
+      trigger: delete
+agents:
+  states:
+    - active
+    - archived
+  transitions:
+    - from: active
+      to: archived
+      trigger: archive
+

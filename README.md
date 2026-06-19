@@ -54,6 +54,12 @@ Or shorthand:
 
 OpenAI-compatible providers run with `use_responses=false`; they target Chat Completions-compatible APIs, so provider-specific capability gaps are expected for hosted tools, Responses-only state, and advanced tracing.
 
+## Sandbox Runtime
+
+Environment sandbox config can be mapped into OpenAI Agents SDK sandbox execution through `SandboxAgent` and `RunConfig.sandbox`. The MVP supports a local SDK-backed `unix_local` sandbox plan for development; production cloud/self-hosted sandbox execution still needs a real sandbox provider and durable worker lifecycle.
+
+See [docs/sandbox-runtime.md](./docs/sandbox-runtime.md).
+
 ## Storage
 
 This service follows the `votrix-backend` split:

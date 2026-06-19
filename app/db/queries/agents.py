@@ -1,0 +1,169 @@
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import Select, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.db.models import Agent, AgentVersion
+from app.ids import new_id
+
+
+def _model_json(value: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"id": value}
+    return value
+
+
+async def create_agent(
+    db: AsyncSession,
+    *,
+    name: str,
+    model: str | dict[str, Any],
+    system: str | None = None,
+    description: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    mcp_servers: list[dict[str, Any]] | None = None,
+    skills: list[dict[str, Any]] | None = None,
+    multiagent: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    runtime: dict[str, Any] | None = None,
+) -> tuple[Agent, AgentVersion]:
+    agent = Agent(
+        id=new_id("agt"),
+        name=name,
+        description=description,
+        active_version=1,
+        metadata_=metadata or {},
+    )
+    version = AgentVersion(
+        id=new_id("agtv"),
+        agent_id=agent.id,
+        version=1,
+        name=name,
+        model=_model_json(model),
+        system=system,
+        description=description,
+        tools=tools or [],
+        mcp_servers=mcp_servers or [],
+        skills=skills or [],
+        multiagent=multiagent,
+        metadata_=metadata or {},
+        runtime=runtime or {},
+    )
+    db.add(agent)
+    db.add(version)
+    await db.flush()
+    return agent, version
+
+
+async def get_agent(db: AsyncSession, agent_id: str) -> Agent | None:
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.versions))
+        .where(Agent.id == agent_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_agents(db: AsyncSession, *, limit: int = 50) -> list[Agent]:
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.versions))
+        .where(Agent.archived_at.is_(None))
+        .order_by(Agent.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_agent_version(
+    db: AsyncSession,
+    *,
+    agent_id: str,
+    version: int,
+) -> AgentVersion | None:
+    result = await db.execute(
+        select(AgentVersion).where(
+            AgentVersion.agent_id == agent_id,
+            AgentVersion.version == version,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_active_agent_version(db: AsyncSession, agent: Agent) -> AgentVersion | None:
+    return await get_agent_version(db, agent_id=agent.id, version=agent.active_version)
+
+
+async def update_agent(
+    db: AsyncSession,
+    agent: Agent,
+    *,
+    name: str,
+    model: dict[str, Any],
+    system: str | None,
+    description: str | None = None,
+    tools: list[dict[str, Any]],
+    mcp_servers: list[dict[str, Any]],
+    skills: list[dict[str, Any]],
+    multiagent: dict[str, Any] | None = None,
+    metadata: dict[str, Any],
+    runtime: dict[str, Any],
+) -> tuple[AgentVersion, bool]:
+    active = await get_active_agent_version(db, agent)
+    if active is None:
+        raise ValueError(f"Agent {agent.id} has no active version")
+
+    if (
+        active.name == name
+        and active.description == description
+        and active.metadata_ == metadata
+        and active.model == model
+        and active.system == system
+        and active.tools == tools
+        and active.mcp_servers == mcp_servers
+        and active.skills == skills
+        and active.multiagent == multiagent
+        and active.runtime == runtime
+    ):
+        return active, False
+
+    next_version = agent.active_version + 1
+    agent.active_version = next_version
+    agent.name = name
+    agent.description = description
+    agent.metadata_ = metadata
+
+    version = AgentVersion(
+        id=new_id("agtv"),
+        agent_id=agent.id,
+        version=next_version,
+        name=name,
+        model=model,
+        system=system,
+        description=description,
+        tools=tools,
+        mcp_servers=mcp_servers,
+        skills=skills,
+        multiagent=multiagent,
+        metadata_=metadata,
+        runtime=runtime,
+    )
+    db.add(version)
+    await db.flush()
+    return version, True
+
+
+async def archive_agent(db: AsyncSession, agent: Agent) -> Agent:
+    agent.archived_at = datetime.now(timezone.utc)
+    await db.flush()
+    return agent
+
+
+def agent_versions_query(agent_id: str) -> Select[tuple[AgentVersion]]:
+    return (
+        select(AgentVersion)
+        .where(AgentVersion.agent_id == agent_id)
+        .order_by(AgentVersion.version.desc())
+    )
