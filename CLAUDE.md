@@ -13,5 +13,7 @@ Follow these invariants:
 - Private hosted code should compose core with `from open_managed_agents import create_app` and provider interfaces, not fork or rewrite core.
 - Core must not import private hosted modules.
 - Add cross-workspace non-visibility tests when adding or changing resource families.
+- Before changing Managed Agents-shaped semantics, check `docs/claude-managed-agents-alignment.md` and the linked official Claude docs. Compatibility means behavior, not only route coverage.
 
 See `docs/open-core-architecture.md` for the full architecture contract.
+See `docs/claude-managed-agents-alignment.md` for the Claude Managed Agents semantic alignment contract.

@@ -91,6 +91,101 @@ async def test_agent_update_rejects_stale_version(client):
     assert response.status_code == 409
 
 
+async def test_multiagent_roster_pins_referenced_agent_versions(client):
+    reviewer = await _create_agent(client)
+
+    response = await client.patch(
+        f"/v1/agents/{reviewer['id']}",
+        headers=TEST_HEADERS,
+        json={"version": reviewer["version"], "system": "Reviewer v2"},
+    )
+    assert response.status_code == 200, response.text
+    reviewer_v2 = response.json()
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "tools": [{"type": "agent_toolset_20260401"}],
+            "multiagent": {
+                "type": "coordinator",
+                "agents": [
+                    {"type": "agent", "id": reviewer["id"]},
+                    {"type": "self"},
+                ],
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    coordinator = response.json()
+    assert coordinator["multiagent"]["agents"][0]["version"] == reviewer_v2["version"]
+
+    response = await client.patch(
+        f"/v1/agents/{reviewer['id']}",
+        headers=TEST_HEADERS,
+        json={"version": reviewer_v2["version"], "system": "Reviewer v3"},
+    )
+    assert response.status_code == 200, response.text
+    reviewer_v3 = response.json()
+
+    response = await client.get(f"/v1/agents/{coordinator['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["multiagent"]["agents"][0]["version"] == reviewer_v2["version"]
+
+    response = await client.patch(
+        f"/v1/agents/{coordinator['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "version": coordinator["version"],
+            "multiagent": {
+                "type": "coordinator",
+                "agents": [{"type": "agent", "id": reviewer["id"]}],
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["multiagent"]["agents"][0]["version"] == reviewer_v3["version"]
+
+
+async def test_agent_mcp_servers_must_match_mcp_toolsets(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Dangling MCP Server",
+            "model": {"id": "gpt-5.5"},
+            "mcp_servers": [{"type": "url", "name": "github", "url": "https://mcp.example.com/github"}],
+            "tools": [{"type": "agent_toolset_20260401"}],
+        },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Dangling MCP Toolset",
+            "model": {"id": "gpt-5.5"},
+            "tools": [{"type": "mcp_toolset", "mcp_server_name": "github"}],
+        },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Bound MCP",
+            "model": {"id": "gpt-5.5"},
+            "mcp_servers": [{"type": "url", "name": "github", "url": "https://mcp.example.com/github"}],
+            "tools": [{"type": "mcp_toolset", "mcp_server_name": "github"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
 async def test_session_pins_agent_version_and_processes_user_event(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

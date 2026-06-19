@@ -23,6 +23,12 @@ This repo is the open-source core for Open Managed Agents. Keep it usable as a s
 - Default OSS providers should be simple and self-hosted friendly.
 - New provider interfaces should be narrow, typed, and usable without importing hosted code.
 
+## Claude Compatibility
+
+- Before changing Managed Agents-shaped semantics, check `docs/claude-managed-agents-alignment.md` and the linked official Claude docs.
+- Preserve agent versioning, session state machine, event protocol, MCP, permissions, vaults, files, memory, deployments, and webhooks according to that alignment contract.
+- Do not treat route coverage alone as compatibility; semantic behavior matters more than surface CRUD.
+
 ## Tests
 
 - Add cross-workspace non-visibility tests for every new major resource family.

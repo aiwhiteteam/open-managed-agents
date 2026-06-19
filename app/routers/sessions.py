@@ -1,9 +1,11 @@
 import asyncio
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_contract import validate_mcp_bindings
 from app.auth import require_api_access
 from app.config import get_settings
 from app.db.engine import get_session, session_scope
@@ -29,6 +31,18 @@ from app.models.sessions import (
 )
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
+from app.session_state import (
+    ACTIVE_STATUSES,
+    ACTION_RESULT_EVENTS,
+    SESSION_IDLE,
+    SESSION_TERMINATED,
+    blocks_mutation,
+    can_start_work,
+    is_action_result,
+    is_waiting_for_action,
+    pending_action_ids,
+    starts_work,
+)
 
 router = APIRouter(
     prefix="/v1/sessions",
@@ -104,11 +118,21 @@ async def update_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if blocks_mutation(session.status):
+        raise HTTPException(status_code=409, detail=f"Cannot update a {session.status} session")
+
+    status_details = None
+    if body.agent is not None:
+        if session.status != SESSION_IDLE or is_waiting_for_action(session.stop_reason):
+            raise HTTPException(status_code=409, detail="Session agent config can only be updated while idle")
+        status_details = await _merge_session_agent_overlay(db, session, body.agent)
+
     session = await sessions_q.update_session(
         db,
         session,
         title=body.title,
         metadata=body.metadata,
+        status_details=status_details,
     )
     await events_q.append_event(
         db,
@@ -128,6 +152,8 @@ async def archive_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if blocks_mutation(session.status):
+        raise HTTPException(status_code=409, detail=f"Cannot archive a {session.status} session")
     session = await sessions_q.archive_session(db, session)
     await db.commit()
     return session_to_response(session)
@@ -141,6 +167,8 @@ async def delete_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if blocks_mutation(session.status):
+        raise HTTPException(status_code=409, detail=f"Cannot delete a {session.status} session")
     await sessions_q.delete_session(db, session)
     await events_q.append_event(
         db,
@@ -160,7 +188,7 @@ async def cancel_session(
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
     stop_reason = {"type": "cancelled"}
-    await sessions_q.update_session(db, session, status="terminated", stop_reason=stop_reason)
+    await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
     await events_q.append_event(
         db,
         session,
@@ -180,8 +208,12 @@ async def resume_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.status == "terminated":
+    if session.status == SESSION_TERMINATED:
         raise HTTPException(status_code=409, detail="Terminated sessions cannot be resumed")
+    if is_waiting_for_action(session.stop_reason):
+        raise HTTPException(status_code=409, detail="Session requires action results before it can resume")
+    if not can_start_work(session.status, session.stop_reason):
+        raise HTTPException(status_code=409, detail=f"Cannot resume a {session.status} session")
     environment = await env_q.get_environment(db, session.environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
@@ -202,14 +234,20 @@ async def send_events(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.status == "terminated":
+    if session.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Session is archived")
+    if session.status == SESSION_TERMINATED:
         raise HTTPException(status_code=409, detail="Session is terminated")
     environment = await env_q.get_environment(db, session.environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
 
+    event_inputs = list(body.events)
+    await _validate_event_batch(db, session, event_inputs)
+
     appended = []
     should_run = False
+    should_interrupt = False
     for event_input in body.events:
         payload = event_input.model_dump(mode="json")
         event = await events_q.append_event(
@@ -219,10 +257,24 @@ async def send_events(
             payload=payload,
         )
         appended.append(event_to_response(event))
-        if event_input.type.startswith("user."):
+        if event_input.type == "user.interrupt":
+            should_interrupt = True
+        elif starts_work(event_input.type):
             should_run = True
+        elif is_action_result(event_input.type):
+            should_run = await _all_pending_actions_resolved(db, session)
+
     work = None
-    if should_run:
+    if should_interrupt:
+        stop_reason = {"type": "interrupted"}
+        await sessions_q.update_session(db, session, status=SESSION_IDLE, stop_reason=stop_reason)
+        await events_q.append_event(
+            db,
+            session,
+            event_type="session.status_idle",
+            payload={"type": "session.status_idle", "status": SESSION_IDLE, "stop_reason": stop_reason},
+        )
+    elif should_run:
         work = await enqueue_session_run(
             db,
             session,
@@ -449,6 +501,123 @@ async def stream_session_thread_events(
     after_seq: int = 0,
 ):
     return await _stream_response(session_id, request, after_seq, thread_id=thread_id)
+
+
+async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -> None:
+    event_types = [event.type for event in event_inputs]
+    if session.status in ACTIVE_STATUSES:
+        if event_types == ["user.interrupt"]:
+            return
+        raise HTTPException(status_code=409, detail=f"Cannot send events while session is {session.status}")
+
+    if is_waiting_for_action(session.stop_reason):
+        if event_types == ["user.interrupt"]:
+            return
+        if not all(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
+            raise HTTPException(status_code=409, detail="Session is waiting for required action results")
+        await _validate_action_results(db, session, event_inputs)
+        return
+
+    if any(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
+        raise HTTPException(status_code=409, detail="Session is not waiting for action results")
+
+
+async def _validate_action_results(db: AsyncSession, session, event_inputs: list) -> None:
+    pending_ids = pending_action_ids(session.stop_reason)
+    history = await events_q.list_events(db, session_id=session.id, after_seq=0, limit=1000)
+    events_by_id = {event.id: event for event in history}
+    resolved_ids = _resolved_action_ids(history)
+    batch_targets: set[str] = set()
+
+    for event_input in event_inputs:
+        payload = event_input.model_dump(mode="json")
+        target_id = _action_result_target(event_input.type, payload)
+        if not target_id:
+            raise HTTPException(status_code=422, detail=f"{event_input.type} must reference a blocking event")
+        if target_id not in pending_ids:
+            raise HTTPException(status_code=409, detail=f"Action event is not pending: {target_id}")
+        if target_id in resolved_ids or target_id in batch_targets:
+            raise HTTPException(status_code=409, detail=f"Action event is already resolved: {target_id}")
+
+        blocking_event = events_by_id.get(target_id)
+        if blocking_event is None:
+            raise HTTPException(status_code=404, detail=f"Blocking event not found: {target_id}")
+        _validate_action_result_matches_blocker(event_input.type, payload, blocking_event.type)
+        batch_targets.add(target_id)
+
+
+def _validate_action_result_matches_blocker(result_type: str, payload: dict[str, Any], blocker_type: str) -> None:
+    if result_type == "user.custom_tool_result":
+        if blocker_type != "agent.custom_tool_use":
+            raise HTTPException(status_code=409, detail="custom_tool_result must target agent.custom_tool_use")
+        return
+
+    if result_type == "user.tool_confirmation":
+        if blocker_type not in {"agent.tool_use", "agent.mcp_tool_use"}:
+            raise HTTPException(status_code=409, detail="tool_confirmation must target agent tool use")
+        result = payload.get("result")
+        if result not in {"allow", "deny"}:
+            raise HTTPException(status_code=422, detail='tool_confirmation.result must be "allow" or "deny"')
+
+
+async def _all_pending_actions_resolved(db: AsyncSession, session) -> bool:
+    pending_ids = pending_action_ids(session.stop_reason)
+    if not pending_ids:
+        return False
+    history = await events_q.list_events(db, session_id=session.id, after_seq=0, limit=1000)
+    return pending_ids.issubset(_resolved_action_ids(history))
+
+
+def _resolved_action_ids(events) -> set[str]:
+    resolved: set[str] = set()
+    for event in events:
+        target_id = _action_result_target(event.type, event.payload)
+        if target_id:
+            resolved.add(target_id)
+    return resolved
+
+
+def _action_result_target(event_type: str, payload: dict[str, Any]) -> str | None:
+    if event_type == "user.custom_tool_result":
+        value = payload.get("custom_tool_use_id")
+    elif event_type == "user.tool_confirmation":
+        value = payload.get("tool_use_id")
+    else:
+        return None
+    return str(value) if value else None
+
+
+async def _merge_session_agent_overlay(db: AsyncSession, session, update: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(update, dict):
+        raise HTTPException(status_code=422, detail="session agent update must be an object")
+    unsupported = set(update) - {"tools", "mcp_servers"}
+    if unsupported:
+        names = ", ".join(sorted(unsupported))
+        raise HTTPException(status_code=422, detail=f"Unsupported session agent update fields: {names}")
+
+    version = await agents_q.get_agent_version(db, agent_id=session.agent_id, version=session.agent_version)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Agent version not found")
+
+    details = dict(session.status_details or {})
+    overlay = dict(details.get("agent") or {})
+    tools = overlay.get("tools", version.tools)
+    mcp_servers = overlay.get("mcp_servers", version.mcp_servers)
+
+    if "tools" in update:
+        tools = update["tools"] or []
+        if not isinstance(tools, list):
+            raise HTTPException(status_code=422, detail="agent.tools must be an array or null")
+        overlay["tools"] = tools
+    if "mcp_servers" in update:
+        mcp_servers = update["mcp_servers"] or []
+        if not isinstance(mcp_servers, list):
+            raise HTTPException(status_code=422, detail="agent.mcp_servers must be an array or null")
+        overlay["mcp_servers"] = mcp_servers
+
+    validate_mcp_bindings(mcp_servers, tools)
+    details["agent"] = overlay
+    return details
 
 
 def _resolve_agent_ref(agent: str | AgentReference) -> tuple[str, int | None]:

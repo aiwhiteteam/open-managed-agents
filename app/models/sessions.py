@@ -24,6 +24,7 @@ class SessionCreateRequest(ApiModel):
 class SessionUpdateRequest(ApiModel):
     title: str | None = None
     metadata: dict[str, Any] | None = None
+    agent: dict[str, Any] | None = None
 
 
 class SessionResponse(ApiModel):

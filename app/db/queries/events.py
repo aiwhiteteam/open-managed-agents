@@ -1,4 +1,5 @@
 from typing import Any
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,4 +73,12 @@ def event_source(event_type: str) -> str:
 def _normalize_payload(event_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
     normalized = dict(payload or {})
     normalized.setdefault("type", event_type)
+    normalized.setdefault("processed_at", _default_processed_at(event_type))
     return normalized
+
+
+def _default_processed_at(event_type: str) -> str | None:
+    source = event_source(event_type)
+    if source in {"user", "system"}:
+        return None
+    return datetime.now(timezone.utc).isoformat()

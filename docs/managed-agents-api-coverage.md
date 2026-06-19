@@ -4,6 +4,9 @@ Source basis:
 
 - Official docs navigation and guides under `https://platform.claude.com/docs/en/managed-agents`
 - Official `anthropic-sdk-python` `api.md` on `main`, checked on 2026-06-19
+- Semantic alignment map: [Claude Managed Agents Alignment](./claude-managed-agents-alignment.md)
+
+This file is route coverage only. It is not a claim of production semantic parity. Use the alignment map and `TODO.md` for state machine, runtime, sandbox, tool, vault, webhook, and deployment semantics.
 
 Status legend:
 
@@ -185,4 +188,3 @@ The current SDK exposes webhook event types and unwrap helpers in beta, but this
 | update | `POST /v1/user_profiles/{user_profile_id}` | partial |
 | list | `GET /v1/user_profiles` | partial |
 | create enrollment URL | `POST /v1/user_profiles/{user_profile_id}/enrollment_url` | stub |
-

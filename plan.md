@@ -136,5 +136,6 @@ Runtime rules:
 - Replace process-local background execution with durable workers and fencing locks.
 - Implement OpenAI SandboxAgent environment mapping.
 - Add OpenTelemetry traces and per-session usage accounting.
-- Add tenant/workspace isolation, per-tenant egress policy, and credential proxying.
+- Extend workspace isolation tests across every resource family, and add hosted-provider hooks for quotas, audit logging, sandbox fleet, and secrets.
+- Add per-workspace egress policy and credential proxying.
 - Add webhook subscriptions and scheduled deployment resources.

@@ -11,6 +11,8 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | Agent update version guard | Implemented | Requires current `version`; stale writes return 409. |
 | Agent no-op update detection | Implemented | Existing version is returned. |
 | Agent metadata merge/delete | Implemented | Empty string deletes a key. |
+| Multiagent roster pinning | Implemented | Coordinator rosters resolve unversioned agent references to the referenced agent's active version at create/update time. |
+| MCP server/toolset declaration validation | Implemented | Rejects unreferenced MCP servers and dangling `mcp_toolset` references. Runtime MCP auth is still partial. |
 | Agent archive | Implemented | Blocks new sessions; existing sessions can continue. |
 | Environment CRUD | Implemented | P0 schema validation only; sandbox backend mapping is not complete. |
 | Session create/list/retrieve/update/archive/delete | Implemented | Sessions pin agent version at creation. |

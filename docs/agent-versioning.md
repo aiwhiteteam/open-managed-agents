@@ -53,6 +53,7 @@ Update semantics:
 - `multiagent` is replaced as a whole and can be cleared with `null`.
 - `metadata` is merged by key. Provided keys are added or updated. Setting a key to an empty string deletes that key.
 - If the resulting config is identical to the current version, no new version is created and the existing version is returned.
+- `multiagent.agents` entries that reference another Agent without an explicit `version` are resolved to that Agent's current active version when the coordinator is created or updated. The stored roster is pinned and does not drift when referenced Agents are updated later.
 
 ## Archive
 
@@ -65,4 +66,3 @@ New sessions cannot reference an archived Agent. Existing sessions pinned to old
 Claude Managed Agents does not require uploading a YAML manifest to publish a new Agent version. The API accepts JSON resource fields for create/update. CLI examples pass JSON-like values for nested fields such as `model` and `tools`.
 
 Skills are separate resources referenced by Agents. Skills may contain markdown, YAML, JSON schemas, scripts, templates, and assets, but that is not the Agent version publish mechanism itself.
-

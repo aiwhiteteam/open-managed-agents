@@ -13,6 +13,7 @@ The first version is intentionally small:
 - Workspace-scoped core design: self-hosted defaults to one workspace, while hosted/org SaaS can wrap the core through provider injection.
 
 See [plan.md](./plan.md) for the research notes, compatibility boundaries, and implementation roadmap.
+For the official Claude Managed Agents semantic alignment map, see [docs/claude-managed-agents-alignment.md](./docs/claude-managed-agents-alignment.md).
 
 For the open-core boundary and hosted SaaS compatibility contract, see [docs/open-core-architecture.md](./docs/open-core-architecture.md). Hosted/private layers should compose the core through the stable package import:
 

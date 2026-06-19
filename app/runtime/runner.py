@@ -12,6 +12,14 @@ from app.db.queries import events as events_q
 from app.db.queries import sessions as sessions_q
 from app.runtime.providers import resolve_runtime_provider, runtime_provider_configured
 from app.runtime.sandbox import sandbox_plan_from_environment
+from app.session_state import (
+    SESSION_IDLE,
+    SESSION_RESCHEDULING,
+    SESSION_RUNNING,
+    SESSION_TERMINATED,
+    can_start_work,
+    is_waiting_for_action,
+)
 
 logger = structlog.get_logger()
 _running_sessions: set[str] = set()
@@ -22,9 +30,27 @@ _running_lock = asyncio.Lock()
 class RuntimeResult:
     final_text: str
     tool_events: list[dict[str, Any]] = field(default_factory=list)
+    requires_action: bool = False
     run_state: dict[str, Any] | None = None
     sandbox_state: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class EffectiveAgentVersion:
+    id: str
+    agent_id: str
+    version: int
+    name: str
+    model: dict[str, Any]
+    system: str | None
+    description: str | None
+    tools: list[dict[str, Any]]
+    mcp_servers: list[dict[str, Any]]
+    skills: list[dict[str, Any]]
+    multiagent: dict[str, Any] | None
+    metadata_: dict[str, Any]
+    runtime: dict[str, Any]
 
 
 def schedule_session_run(session_id: str) -> None:
@@ -50,14 +76,14 @@ async def _run_session_turn(session_id: str) -> None:
         session = await sessions_q.get_session(db, session_id)
         if session is None or session.deleted_at is not None:
             return
-        if session.status == "terminated":
+        if not can_start_work(session.status, session.stop_reason):
             return
-        await sessions_q.update_session(db, session, status="running", stop_reason={"type": "in_progress"})
+        await sessions_q.update_session(db, session, status=SESSION_RUNNING, stop_reason={"type": "in_progress"})
         await events_q.append_event(
             db,
             session,
             event_type="session.status_running",
-            payload={"type": "session.status_running", "status": "running"},
+            payload={"type": "session.status_running", "status": SESSION_RUNNING},
         )
         await db.commit()
 
@@ -80,20 +106,53 @@ async def _run_session_turn(session_id: str) -> None:
             if environment is None or environment.deleted_at is not None:
                 raise RuntimeError(f"Environment {session.environment_id} not found")
             history = await events_q.list_events(db, session_id=session.id, after_seq=0, limit=500)
+            effective_version = _effective_agent_version(version, session.status_details)
 
-        result = await _execute(version, history, environment.config)
+        result = await _execute(effective_version, history, environment.config)
 
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id)
             if session is None:
                 return
+            if session.status != SESSION_RUNNING or is_waiting_for_action(session.stop_reason):
+                return
+            blocking_event_ids: list[str] = []
             for tool_event in result.tool_events:
-                await events_q.append_event(
+                event = await events_q.append_event(
                     db,
                     session,
                     event_type=tool_event["type"],
                     payload=tool_event,
                 )
+                if result.requires_action and tool_event["type"] in {
+                    "agent.custom_tool_use",
+                    "agent.tool_use",
+                    "agent.mcp_tool_use",
+                }:
+                    blocking_event_ids.append(event.id)
+            if result.requires_action:
+                stop_reason = {"type": "requires_action", "event_ids": blocking_event_ids}
+                await sessions_q.update_session(
+                    db,
+                    session,
+                    status=SESSION_IDLE,
+                    stop_reason=stop_reason,
+                    run_state=result.run_state,
+                    sandbox_state=result.sandbox_state,
+                )
+                await events_q.append_event(
+                    db,
+                    session,
+                    event_type="session.status_idle",
+                    payload={
+                        "type": "session.status_idle",
+                        "status": SESSION_IDLE,
+                        "stop_reason": stop_reason,
+                        "usage": result.usage or {},
+                    },
+                )
+                await db.commit()
+                return
             if result.final_text:
                 await events_q.append_event(
                     db,
@@ -108,7 +167,7 @@ async def _run_session_turn(session_id: str) -> None:
             await sessions_q.update_session(
                 db,
                 session,
-                status="idle",
+                status=SESSION_IDLE,
                 stop_reason=stop_reason,
                 run_state=result.run_state,
                 sandbox_state=result.sandbox_state,
@@ -119,7 +178,7 @@ async def _run_session_turn(session_id: str) -> None:
                 event_type="session.status_idle",
                 payload={
                     "type": "session.status_idle",
-                    "status": "idle",
+                    "status": SESSION_IDLE,
                     "stop_reason": stop_reason,
                     "usage": result.usage or {},
                 },
@@ -132,7 +191,7 @@ async def _run_session_turn(session_id: str) -> None:
             if session is None:
                 return
             stop_reason = {"type": "error"}
-            await sessions_q.update_session(db, session, status="error", stop_reason=stop_reason)
+            await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
             await events_q.append_event(
                 db,
                 session,
@@ -142,6 +201,12 @@ async def _run_session_turn(session_id: str) -> None:
                     "message": str(exc),
                     "error_type": exc.__class__.__name__,
                 },
+            )
+            await events_q.append_event(
+                db,
+                session,
+                event_type="session.status_terminated",
+                payload={"type": "session.status_terminated", "status": SESSION_TERMINATED, "stop_reason": stop_reason},
             )
             await db.commit()
 
@@ -159,6 +224,29 @@ async def _execute(version, history, environment_config: dict[str, Any] | None =
                 raise
             logger.warning("openai_agents_sdk_unavailable_falling_back_to_local")
     return await _execute_local(version, history, environment_config)
+
+
+def _effective_agent_version(version, status_details: dict[str, Any] | None) -> EffectiveAgentVersion:
+    overlay = {}
+    if isinstance(status_details, dict) and isinstance(status_details.get("agent"), dict):
+        overlay = status_details["agent"]
+    tools = overlay.get("tools", version.tools)
+    mcp_servers = overlay.get("mcp_servers", version.mcp_servers)
+    return EffectiveAgentVersion(
+        id=version.id,
+        agent_id=version.agent_id,
+        version=version.version,
+        name=version.name,
+        model=version.model,
+        system=version.system,
+        description=version.description,
+        tools=tools if isinstance(tools, list) else version.tools,
+        mcp_servers=mcp_servers if isinstance(mcp_servers, list) else version.mcp_servers,
+        skills=version.skills,
+        multiagent=version.multiagent,
+        metadata_=version.metadata_,
+        runtime=version.runtime,
+    )
 
 
 async def _execute_openai(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
@@ -272,8 +360,52 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
 async def _execute_local(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
     await asyncio.sleep(0.05)
     sandbox_plan = sandbox_plan_from_environment(environment_config)
+    latest_action = _latest_user_action_event(history)
+    if latest_action is not None:
+        return RuntimeResult(
+            final_text=_local_action_result_text(latest_action),
+            run_state={"backend": "local", "agent_version_id": version.id, "resumed_from": latest_action.type},
+            sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
+        )
+
     latest = _latest_user_text(history)
     if latest:
+        custom_tool = _first_custom_tool(version.tools)
+        if custom_tool is not None:
+            name = str(custom_tool.get("name") or "custom_tool")
+            return RuntimeResult(
+                final_text="",
+                tool_events=[
+                    {
+                        "type": "agent.custom_tool_use",
+                        "name": name,
+                        "input": {"prompt": latest},
+                        "tool": _public_tool_summary(custom_tool),
+                    }
+                ],
+                requires_action=True,
+                run_state={"backend": "local", "agent_version_id": version.id, "pending_action": "custom_tool"},
+                sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
+            )
+
+        confirmation_tool = _first_confirmation_tool(version.tools)
+        if confirmation_tool is not None:
+            return RuntimeResult(
+                final_text="",
+                tool_events=[
+                    {
+                        "type": confirmation_tool["event_type"],
+                        "name": confirmation_tool["name"],
+                        "input": {"prompt": latest},
+                        "permission_policy": {"type": "always_ask"},
+                        "tool": confirmation_tool["tool"],
+                    }
+                ],
+                requires_action=True,
+                run_state={"backend": "local", "agent_version_id": version.id, "pending_action": "tool_confirmation"},
+                sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
+            )
+
         text = f"Open Managed Agents local runtime received: {latest}"
     else:
         text = "Open Managed Agents local runtime is idle."
@@ -282,6 +414,98 @@ async def _execute_local(version, history, environment_config: dict[str, Any] | 
         run_state={"backend": "local", "agent_version_id": version.id},
         sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
     )
+
+
+def _latest_user_action_event(history):
+    for event in reversed(history):
+        if not event.type.startswith("user."):
+            continue
+        return event if event.type in {"user.custom_tool_result", "user.tool_confirmation"} else None
+    return None
+
+
+def _local_action_result_text(event) -> str:
+    if event.type == "user.custom_tool_result":
+        result = _text_from_payload(event.payload) or "custom tool result received"
+        return f"Open Managed Agents local runtime received custom tool result: {result}"
+
+    result = event.payload.get("result")
+    if result == "deny":
+        message = event.payload.get("deny_message") or "tool use denied"
+        return f"Open Managed Agents local runtime received tool denial: {message}"
+    return "Open Managed Agents local runtime received tool confirmation: allow"
+
+
+def _first_custom_tool(tools: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for tool in tools or []:
+        if isinstance(tool, dict) and _normalized_tool_type(tool) == "custom":
+            return tool
+    return None
+
+
+def _first_confirmation_tool(tools: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        tool_type = _normalized_tool_type(tool)
+        if tool_type == "custom":
+            continue
+        if tool_type == "mcp_toolset" and _permission_policy_type(tool, default="always_ask") == "always_ask":
+            return {
+                "event_type": "agent.mcp_tool_use",
+                "name": str(tool.get("mcp_server_name") or tool.get("name") or "mcp_tool"),
+                "tool": _public_tool_summary(tool),
+            }
+        if tool_type == "agent_toolset_20260401":
+            config_tool = _first_configured_always_ask_tool(tool)
+            if config_tool is not None:
+                return {
+                    "event_type": "agent.tool_use",
+                    "name": config_tool,
+                    "tool": _public_tool_summary(tool),
+                }
+            if _permission_policy_type(tool, default="always_allow") == "always_ask":
+                return {
+                    "event_type": "agent.tool_use",
+                    "name": "bash",
+                    "tool": _public_tool_summary(tool),
+                }
+    return None
+
+
+def _first_configured_always_ask_tool(tool: dict[str, Any]) -> str | None:
+    configs = tool.get("configs")
+    if not isinstance(configs, list):
+        return None
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        if config.get("enabled") is False:
+            continue
+        if _permission_policy_type(config, default="") == "always_ask":
+            name = config.get("name")
+            return str(name) if name else "tool"
+    return None
+
+
+def _permission_policy_type(config: dict[str, Any], *, default: str) -> str:
+    default_config = config.get("default_config")
+    candidates = [config]
+    if isinstance(default_config, dict):
+        candidates.insert(0, default_config)
+    for candidate in candidates:
+        policy = candidate.get("permission_policy") if isinstance(candidate, dict) else None
+        if isinstance(policy, dict) and policy.get("type"):
+            return str(policy["type"])
+    return default
+
+
+def _public_tool_summary(tool: dict[str, Any]) -> dict[str, Any]:
+    summary = dict(tool)
+    for key in ("authorization", "headers"):
+        if key in summary:
+            summary[key] = "redacted"
+    return summary
 
 
 def _history_to_openai_input(history) -> list[dict[str, Any]]:

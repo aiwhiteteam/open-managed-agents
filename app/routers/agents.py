@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent_contract import validate_mcp_bindings
 from app.auth import require_api_access
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
@@ -26,6 +27,8 @@ async def create_agent(
     body: AgentCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    validate_mcp_bindings(body.mcp_servers, body.tools)
+    multiagent = await _normalize_multiagent_roster(db, body.multiagent)
     agent, version = await agents_q.create_agent(
         db,
         name=body.name,
@@ -35,7 +38,7 @@ async def create_agent(
         tools=body.tools,
         mcp_servers=body.mcp_servers,
         skills=body.skills,
-        multiagent=body.multiagent,
+        multiagent=multiagent,
         metadata=body.metadata,
         runtime=body.runtime,
     )
@@ -108,7 +111,10 @@ async def update_agent(
 
     update = body.model_dump(exclude_unset=True)
     update.pop("version", None)
+    if "multiagent" in update:
+        update["multiagent"] = await _normalize_multiagent_roster(db, update["multiagent"])
     next_config = _merge_agent_update(active, agent, update)
+    validate_mcp_bindings(next_config["mcp_servers"], next_config["tools"])
     version, _created = await agents_q.update_agent(
         db,
         agent,
@@ -132,6 +138,71 @@ async def archive_agent(
     await agents_q.archive_agent(db, agent)
     await db.commit()
     return agent_to_response(agent, version)
+
+
+async def _normalize_multiagent_roster(db: AsyncSession, multiagent: dict | None) -> dict | None:
+    if multiagent is None:
+        return None
+    if not isinstance(multiagent, dict):
+        raise HTTPException(status_code=422, detail="multiagent must be an object")
+
+    normalized = dict(multiagent)
+    if normalized.get("type") != "coordinator":
+        raise HTTPException(status_code=422, detail='multiagent.type must be "coordinator"')
+
+    agents = normalized.get("agents", [])
+    if not isinstance(agents, list):
+        raise HTTPException(status_code=422, detail="multiagent.agents must be an array")
+
+    seen: set[str] = set()
+    normalized_agents: list[dict] = []
+    for entry in agents:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail="multiagent.agents entries must be objects")
+
+        entry_type = entry.get("type")
+        if entry_type == "self":
+            seen.add("self")
+            normalized_agents.append(dict(entry))
+            continue
+
+        if entry_type != "agent":
+            raise HTTPException(status_code=422, detail='multiagent.agents entries must be "agent" or "self"')
+
+        agent_id = entry.get("id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise HTTPException(status_code=422, detail="multiagent agent entries require id")
+
+        referenced_agent = await agents_q.get_agent(db, agent_id)
+        if referenced_agent is None or referenced_agent.archived_at is not None:
+            raise HTTPException(status_code=422, detail=f"Referenced agent not found: {agent_id}")
+
+        raw_version = entry.get("version")
+        try:
+            pinned_version = referenced_agent.active_version if raw_version is None else int(raw_version)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="multiagent agent version must be an integer") from exc
+        referenced_version = await agents_q.get_agent_version(
+            db,
+            agent_id=agent_id,
+            version=pinned_version,
+            workspace_id=referenced_agent.workspace_id,
+        )
+        if referenced_version is None:
+            raise HTTPException(status_code=422, detail=f"Referenced agent version not found: {agent_id}@{pinned_version}")
+
+        seen.add(agent_id)
+        pinned_entry = dict(entry)
+        pinned_entry["type"] = "agent"
+        pinned_entry["id"] = agent_id
+        pinned_entry["version"] = pinned_version
+        normalized_agents.append(pinned_entry)
+
+    if len(seen) > 20:
+        raise HTTPException(status_code=422, detail="multiagent.agents supports at most 20 unique agents")
+
+    normalized["agents"] = normalized_agents
+    return normalized
 
 
 def _merge_agent_update(active, agent, update: dict) -> dict:

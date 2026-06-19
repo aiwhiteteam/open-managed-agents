@@ -78,6 +78,7 @@ async def update_session(
     title: str | None = None,
     metadata: dict[str, Any] | None = None,
     status: str | None = None,
+    status_details: dict[str, Any] | None = None,
     stop_reason: dict[str, Any] | None = None,
     run_state: dict[str, Any] | None = None,
     sandbox_state: dict[str, Any] | None = None,
@@ -88,6 +89,8 @@ async def update_session(
         session.metadata_ = metadata
     if status is not None:
         session.status = status
+    if status_details is not None:
+        session.status_details = status_details
     if stop_reason is not None:
         session.stop_reason = stop_reason
     if run_state is not None:
@@ -106,5 +109,5 @@ async def archive_session(db: AsyncSession, session: ManagedSession) -> ManagedS
 
 async def delete_session(db: AsyncSession, session: ManagedSession) -> None:
     session.deleted_at = datetime.now(timezone.utc)
-    session.status = "deleted"
+    session.status = "terminated"
     await db.flush()
