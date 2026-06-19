@@ -11,10 +11,9 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 ## Runtime Semantics
 
-- Replace process-local background tasks with durable workers and fencing locks.
+- Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub/worker deployment and fencing locks.
 - Implement true resumable OpenAI Agents SDK `RunState` persistence.
 - Map OpenAI Agents SDK streaming events into the full Claude Managed Agents event union.
-- Use per-provider capability maps to actively filter unsupported model parameters before SDK calls.
 - Add integration tests with mocked OpenAI-compatible endpoints for DeepSeek, MiniMax, and at least one custom provider.
 - Implement tool confirmation and custom tool result continuation semantics.
 - Implement session `rescheduling` behavior for transient failures.
@@ -24,7 +23,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 - Map `cloud` environments to a real production sandbox provider.
 - Map `self_hosted` environments to a real worker queue.
-- Implement self-hosted worker long-poll, lease, heartbeat timeout, stop, and retry semantics.
+- Add self-hosted worker auth, retry backoff, and automatic heartbeat timeout recovery.
 - Enforce network policies, package installation controls, and sandbox resource limits.
 
 ## Skills
@@ -34,7 +33,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 ## Files And Resources
 
-- Add content deduplication, max size limits, malware/content scanning, and R2 lifecycle policies.
+- Add content deduplication, malware/content scanning, and R2 lifecycle policies.
 - Add a migration command to move legacy DB-backed local blobs into R2.
 - Implement exact session resource union types for file, GitHub repository, and future resource kinds.
 

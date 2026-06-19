@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     oma_default_openai_model: str = "gpt-5.5"
     oma_event_poll_interval_seconds: float = 0.5
     oma_storage_backend: str = "database"
+    oma_max_file_upload_bytes: int = 50 * 1024 * 1024
+    oma_max_skill_archive_bytes: int = 25 * 1024 * 1024
     oma_openai_compatible_providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     deepseek_api_key: str = ""

@@ -12,6 +12,11 @@ TEST_HEADERS = {
     "anthropic-version": "2023-06-01",
 }
 
+OPEN_MANAGED_AGENTS_HEADERS = {
+    "open-managed-agents-beta": "open-managed-agents-2026-04-01",
+    "anthropic-version": "2023-06-01",
+}
+
 
 @pytest.fixture(autouse=True)
 async def test_database(tmp_path, monkeypatch):

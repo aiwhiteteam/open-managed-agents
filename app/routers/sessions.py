@@ -28,7 +28,7 @@ from app.models.sessions import (
     session_to_response,
 )
 from app.models.resources import GenericBody, deleted_response, resource_to_response
-from app.runtime.runner import run_session_turn
+from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
 
 router = APIRouter(
     prefix="/v1/sessions",
@@ -182,7 +182,13 @@ async def resume_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status == "terminated":
         raise HTTPException(status_code=409, detail="Terminated sessions cannot be resumed")
-    background_tasks.add_task(run_session_turn, session.id)
+    environment = await env_q.get_environment(db, session.environment_id)
+    if environment is None or environment.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    work = await enqueue_session_run(db, session, trigger="session.resume")
+    await db.commit()
+    if should_execute_inline(environment.config):
+        background_tasks.add_task(execute_work_item, work.id)
     return session_to_response(session)
 
 
@@ -198,6 +204,9 @@ async def send_events(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status == "terminated":
         raise HTTPException(status_code=409, detail="Session is terminated")
+    environment = await env_q.get_environment(db, session.environment_id)
+    if environment is None or environment.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Environment not found")
 
     appended = []
     should_run = False
@@ -212,10 +221,18 @@ async def send_events(
         appended.append(event_to_response(event))
         if event_input.type.startswith("user."):
             should_run = True
+    work = None
+    if should_run:
+        work = await enqueue_session_run(
+            db,
+            session,
+            trigger="session.events",
+            metadata={"event_ids": [event.id for event in appended]},
+        )
     await db.commit()
 
-    if should_run:
-        background_tasks.add_task(run_session_turn, session.id)
+    if work is not None and should_execute_inline(environment.config):
+        background_tasks.add_task(execute_work_item, work.id)
 
     return SendEventsResponse(data=appended)
 

@@ -5,8 +5,8 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | Area | Status | Notes |
 | --- | --- | --- |
 | `/v1` URL shape | Implemented | Matches Anthropic-style stable root path. |
-| `anthropic-version` header | Implemented | Required by default, configurable. |
-| `anthropic-beta: managed-agents-2026-04-01` | Implemented | Required by default. |
+| Native beta header | Implemented | `open-managed-agents-beta: open-managed-agents-2026-04-01` is accepted without Anthropic headers. |
+| Claude compatibility headers | Implemented | `anthropic-beta: managed-agents-2026-04-01` is accepted; `anthropic-version: 2023-06-01` is required when using `anthropic-beta`. |
 | Agent create/list/retrieve | Implemented | Flexible JSON config fields. |
 | Agent update version guard | Implemented | Requires current `version`; stale writes return 409. |
 | Agent no-op update detection | Implemented | Existing version is returned. |
@@ -25,4 +25,4 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | Memory stores | Partial | Postgres-backed path memories with unique path, optimistic version checks, version history with actor attribution, and redaction. Typed SDK schema parity and runtime memory tools are TODO. |
 | Deployments and runs | Partial | Metadata CRUD, cron/timezone validation, pause/unpause, manual run, and deployment-run session linkage. Real scheduler/retry worker semantics are TODO. |
 | User profiles | Partial | Metadata CRUD and placeholder enrollment URL. Identity/trust semantics are TODO. |
-| Self-hosted environment work | Stub | Queue routes exist, real lease/worker behavior is TODO. |
+| Self-hosted environment work | Partial | Postgres-backed work items, poll lease, ack, heartbeat, stop, and stats are implemented. Worker auth, retry backoff, and external worker deployment are TODO. |

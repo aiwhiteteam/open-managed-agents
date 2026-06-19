@@ -1,6 +1,6 @@
 import asyncio
 
-from tests.conftest import TEST_HEADERS
+from tests.conftest import OPEN_MANAGED_AGENTS_HEADERS, TEST_HEADERS
 
 
 async def _create_agent(client):
@@ -149,6 +149,25 @@ async def test_missing_beta_header_is_rejected(client):
     )
     assert response.status_code == 400
     assert response.json()["error"]["type"] == "invalid_request_error"
+
+
+async def test_open_managed_agents_beta_alias_is_accepted(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=OPEN_MANAGED_AGENTS_HEADERS,
+        json={"name": "Open Beta", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+
+    response = await client.post(
+        "/v1/agents",
+        headers={
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "open-managed-agents-2026-04-01",
+        },
+        json={"name": "Open Beta Anthropic Header", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
 
 
 async def test_missing_anthropic_version_header_is_rejected(client):

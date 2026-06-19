@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
@@ -13,6 +13,7 @@ from app.models.environments import (
     environment_to_response,
 )
 from app.models.resources import GenericBody, resource_to_response
+from app.runtime.work_queue import ack_work, heartbeat_work, lease_next_work, stop_work
 
 router = APIRouter(
     prefix="/v1/environments",
@@ -123,18 +124,21 @@ async def list_environment_work(
 @router.get("/{environment_id}/work/poll")
 async def poll_environment_work(
     environment_id: str,
+    worker_id: str = Query(default="anonymous"),
+    lease_seconds: int = Query(default=60, ge=5, le=3600),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
-    work = await res_q.list_resources(
+    work = await lease_next_work(
         db,
-        resource_type="environment_work",
-        parent_id=environment_id,
-        limit=1,
+        environment_id=environment_id,
+        worker_id=worker_id,
+        lease_seconds=lease_seconds,
     )
-    if not work:
+    if work is None:
         return None
-    return resource_to_response(work[0], public_type="self_hosted_work")
+    await db.commit()
+    return resource_to_response(work, public_type="self_hosted_work")
 
 
 @router.get("/{environment_id}/work/stats")
@@ -153,7 +157,11 @@ async def environment_work_stats(
         "type": "self_hosted_work_queue_stats",
         "environment_id": environment_id,
         "queued": len([w for w in queued if w.status == "queued"]),
+        "leased": len([w for w in queued if w.status == "leased"]),
         "running": len([w for w in queued if w.status == "running"]),
+        "completed": len([w for w in queued if w.status == "completed"]),
+        "error": len([w for w in queued if w.status == "error"]),
+        "stopped": len([w for w in queued if w.status == "stopped"]),
     }
 
 
@@ -188,13 +196,12 @@ async def update_environment_work(
 async def ack_environment_work(
     environment_id: str,
     work_id: str,
+    worker_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    data = dict(work.data)
-    data["acked"] = True
-    await res_q.update_resource(db, work, data=data, status="running")
+    await ack_work(db, work, worker_id=worker_id)
     await db.commit()
     return resource_to_response(work, public_type="self_hosted_work")
 
@@ -204,15 +211,21 @@ async def heartbeat_environment_work(
     environment_id: str,
     work_id: str,
     body: GenericBody,
+    worker_id: str | None = Query(default=None),
+    lease_seconds: int = Query(default=60, ge=5, le=3600),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    data = dict(work.data)
-    data["last_heartbeat"] = body.model_dump(mode="json")
-    await res_q.update_resource(db, work, data=data)
+    await heartbeat_work(
+        db,
+        work,
+        worker_id=worker_id,
+        lease_seconds=lease_seconds,
+        payload=body.model_dump(mode="json"),
+    )
     await db.commit()
-    return {"type": "self_hosted_work_heartbeat_response", "ok": True, "work_id": work.id}
+    return resource_to_response(work, public_type="self_hosted_work")
 
 
 @router.post("/{environment_id}/work/{work_id}/stop")
@@ -224,9 +237,7 @@ async def stop_environment_work(
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    data = dict(work.data)
-    data["stop"] = body.model_dump(mode="json")
-    await res_q.update_resource(db, work, data=data, status="stopped")
+    await stop_work(db, work, payload=body.model_dump(mode="json"))
     await db.commit()
     return resource_to_response(work, public_type="self_hosted_work")
 

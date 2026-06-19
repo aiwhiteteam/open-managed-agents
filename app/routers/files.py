@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
+from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import FlexibleApiModel, ListResponse
@@ -49,6 +50,11 @@ async def upload_file(
     db: AsyncSession = Depends(get_session),
 ):
     content = await file.read()
+    _enforce_size_limit(
+        len(content),
+        get_settings().oma_max_file_upload_bytes,
+        label="File upload",
+    )
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
     storage_fields = {}
@@ -134,6 +140,12 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
     info = await get_file_info(body.key)
     mime_type = body.mime_type or info.get("ContentType") or "application/octet-stream"
     size_bytes = body.size_bytes or info.get("ContentLength")
+    if size_bytes is not None:
+        _enforce_size_limit(
+            int(size_bytes),
+            get_settings().oma_max_file_upload_bytes,
+            label="File upload",
+        )
     permanent_key = object_key(
         namespace="oma",
         category="files",
@@ -204,3 +216,11 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_session)):
     await res_q.delete_resource(db, file)
     await db.commit()
     return deleted_response(file, public_type="deleted_file")
+
+
+def _enforce_size_limit(size_bytes: int, max_bytes: int, *, label: str) -> None:
+    if max_bytes > 0 and size_bytes > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"{label} exceeds maximum size of {max_bytes} bytes",
+        )

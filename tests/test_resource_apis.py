@@ -1,4 +1,5 @@
 from tests.conftest import TEST_HEADERS
+from app.config import get_settings
 
 
 async def test_post_update_alias_matches_official_sdk_shape(client):
@@ -39,6 +40,20 @@ async def test_files_upload_download_delete(client):
     response = await client.delete(f"/v1/files/{file['id']}", headers=TEST_HEADERS)
     assert response.status_code == 200
     assert response.json()["deleted"] is True
+
+
+async def test_file_upload_size_limit(client, monkeypatch):
+    monkeypatch.setenv("OMA_MAX_FILE_UPLOAD_BYTES", "4")
+    get_settings.cache_clear()
+
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("too-big.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert "maximum size" in response.json()["error"]["message"]
 
 
 async def test_skill_create_version_and_download(client):

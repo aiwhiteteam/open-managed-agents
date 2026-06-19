@@ -162,11 +162,17 @@ async def _execute(version, history, environment_config: dict[str, Any] | None =
 
 
 async def _execute_openai(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
-    from agents import Agent, RunConfig, Runner
+    from agents import Agent, ModelSettings, RunConfig, Runner
     from agents.models.openai_provider import OpenAIProvider
     from agents.sandbox import SandboxAgent
 
     provider = resolve_runtime_provider(version.model)
+    model_settings, removed_model_settings = _model_settings_for_provider(
+        version.runtime,
+        version.model,
+        provider.capabilities,
+        ModelSettings,
+    )
     sandbox_plan = sandbox_plan_from_environment(environment_config)
     agent_class = SandboxAgent if sandbox_plan.enabled and sandbox_plan.sdk_supported else Agent
     agent_kwargs: dict[str, Any] = {}
@@ -176,6 +182,7 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
         name=version.name,
         instructions=version.system or "You are a helpful managed agent.",
         model=provider.model_id,
+        model_settings=model_settings,
         **agent_kwargs,
     )
     sdk_input = _history_to_openai_input(history)
@@ -225,6 +232,7 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
                 "reasoning_traces": provider.capabilities.reasoning_traces,
                 "unsupported_parameters": list(provider.capabilities.unsupported_parameters),
             },
+            "filtered_model_settings": removed_model_settings,
             "sdk_state": _safe_state(result),
         },
         sandbox_state=sandbox_plan.summary,
@@ -260,6 +268,40 @@ def _history_to_openai_input(history) -> list[dict[str, Any]]:
     if not items:
         items.append({"role": "user", "content": ""})
     return items
+
+
+def _model_settings_for_provider(
+    runtime: dict[str, Any] | None,
+    model: dict[str, Any] | None,
+    capabilities,
+    model_settings_cls,
+):
+    raw_settings: dict[str, Any] = {}
+    if isinstance(model, dict) and isinstance(model.get("settings"), dict):
+        raw_settings.update(model["settings"])
+    if isinstance(runtime, dict) and isinstance(runtime.get("model_settings"), dict):
+        raw_settings.update(runtime["model_settings"])
+    if not raw_settings:
+        return model_settings_cls(), {}
+
+    allowed_fields = set(getattr(model_settings_cls, "__annotations__", {}).keys())
+    unsupported = set(capabilities.unsupported_parameters)
+    if not capabilities.reasoning_traces:
+        unsupported.add("reasoning")
+    if not capabilities.responses_api:
+        unsupported.update({"store", "prompt_cache_retention", "response_include", "context_management"})
+
+    filtered = {
+        key: value
+        for key, value in raw_settings.items()
+        if key in allowed_fields and key not in unsupported
+    }
+    removed = {
+        key: value
+        for key, value in raw_settings.items()
+        if key not in filtered
+    }
+    return model_settings_cls(**filtered), removed
 
 
 def _latest_user_text(history) -> str:

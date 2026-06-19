@@ -60,6 +60,8 @@ Environment sandbox config can be mapped into OpenAI Agents SDK sandbox executio
 
 See [docs/sandbox-runtime.md](./docs/sandbox-runtime.md).
 
+Session execution is queued as Postgres-backed environment work before it runs. See [docs/work-queue.md](./docs/work-queue.md).
+
 ## Storage
 
 This service follows the `votrix-backend` split:
@@ -72,18 +74,23 @@ This service follows the `votrix-backend` split:
 
 ## Minimal Flow
 
-All Managed Agents-shaped routes use `/v1` paths and expect:
+Open Managed Agents routes use `/v1` paths and the native beta header:
+
+- `open-managed-agents-beta: open-managed-agents-2026-04-01`
+
+Claude Managed Agents compatibility headers are also accepted:
 
 - `anthropic-version: 2023-06-01`
 - `anthropic-beta: managed-agents-2026-04-01`
+
+When using `anthropic-beta`, the Anthropic version header is required. Native clients should use `open-managed-agents-beta`.
 
 Create an agent:
 
 ```bash
 curl -s http://localhost:8080/v1/agents \
   -H 'content-type: application/json' \
-  -H 'anthropic-version: 2023-06-01' \
-  -H 'anthropic-beta: managed-agents-2026-04-01' \
+  -H 'open-managed-agents-beta: open-managed-agents-2026-04-01' \
   -d '{
     "name": "Coding Assistant",
     "model": {"id": "gpt-5.5"},
@@ -97,8 +104,7 @@ Publish a new agent version:
 ```bash
 curl -s -X PATCH http://localhost:8080/v1/agents/$AGENT_ID \
   -H 'content-type: application/json' \
-  -H 'anthropic-version: 2023-06-01' \
-  -H 'anthropic-beta: managed-agents-2026-04-01' \
+  -H 'open-managed-agents-beta: open-managed-agents-2026-04-01' \
   -d '{
     "version": 1,
     "system": "You are a helpful coding agent. Always write tests."

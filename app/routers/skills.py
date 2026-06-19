@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
+from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import ListResponse
@@ -162,6 +163,7 @@ async def _create_skill_version_resource(
     data: dict[str, Any],
     content: bytes,
 ):
+    _enforce_skill_archive_size(content)
     sha256 = hashlib.sha256(content).hexdigest()
     storage_fields = {}
     db_content = content
@@ -275,6 +277,15 @@ def _zip_uploaded_files(uploaded_files: list[tuple[str, bytes, str | None]]) -> 
         for filename, raw, _mime_type in uploaded_files:
             archive.writestr(_normalize_zip_path(filename), raw)
     return buffer.getvalue()
+
+
+def _enforce_skill_archive_size(content: bytes) -> None:
+    max_bytes = get_settings().oma_max_skill_archive_bytes
+    if max_bytes > 0 and len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Skill archive exceeds maximum size of {max_bytes} bytes",
+        )
 
 
 def _normalize_zip_path(filename: str) -> str:

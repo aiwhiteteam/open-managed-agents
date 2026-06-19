@@ -1,4 +1,5 @@
 from tests.conftest import TEST_HEADERS
+from app.config import get_settings
 
 
 async def test_skill_upload_rejects_missing_description(client):
@@ -52,3 +53,23 @@ async def test_skill_upload_persists_manifest_metadata(client):
     assert skill["description"] == "Use sources."
     assert skill["top_level_directory"] == "skill"
     assert skill["version"]["manifest"]["name"] == "research"
+
+
+async def test_skill_upload_size_limit(client, monkeypatch):
+    monkeypatch.setenv("OMA_MAX_SKILL_ARCHIVE_BYTES", "100")
+    get_settings.cache_clear()
+
+    response = await client.post(
+        "/v1/skills",
+        headers=TEST_HEADERS,
+        files={
+            "files": (
+                "skill/SKILL.md",
+                b"---\nname: research\ndescription: Use sources.\n---\nBody.",
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+    assert "maximum size" in response.json()["error"]["message"]

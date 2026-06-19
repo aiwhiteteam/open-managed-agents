@@ -1,5 +1,6 @@
 from app.config import get_settings
 from app.runtime.providers import provider_capabilities, resolve_runtime_provider, runtime_provider_configured
+from app.runtime.runner import _model_settings_for_provider
 
 
 def test_deepseek_provider_resolution(monkeypatch):
@@ -60,6 +61,25 @@ def test_provider_capability_map(monkeypatch):
     assert openai.hosted_tools is True
     assert deepseek.responses_api is False
     assert deepseek.hosted_tools is False
+
+
+def test_provider_capability_map_filters_model_settings(monkeypatch):
+    from agents import ModelSettings
+
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
+    get_settings.cache_clear()
+    config = resolve_runtime_provider({"provider": "minimax", "id": "MiniMax-M3"})
+
+    model_settings, removed = _model_settings_for_provider(
+        {"model_settings": {"temperature": 0.2, "presence_penalty": 1.0, "reasoning": {"effort": "low"}}},
+        {},
+        config.capabilities,
+        ModelSettings,
+    )
+
+    assert model_settings.temperature == 0.2
+    assert "presence_penalty" in removed
+    assert "reasoning" in removed
 
 
 def test_unconfigured_provider_falls_back_in_auto(monkeypatch):
