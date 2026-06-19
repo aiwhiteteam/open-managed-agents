@@ -11,7 +11,7 @@ Reasoning:
 - Claude Managed Agents is a managed agent control plane plus execution plane, not just a thin REST proxy. The public docs describe four core resources: Agent, Environment, Session, and Events. Sessions are stateful, long-running, resume cleanly, and store conversation history, sandbox state, and outputs server-side.
 - Claude Managed Agents requires the `managed-agents-2026-04-01` beta header, supports long-running asynchronous work, SSE event streaming, persisted event history, cloud or self-hosted sandboxes, built-in tools, MCP, and versioned reusable agents.
 - OpenAI Agents SDK for Python already has the runtime primitives we need: Agent, Runner, tool execution, sessions, streaming, handoffs, guardrails, MCP, tracing, and beta sandbox agents with persistent workspaces and resumable sandbox sessions.
-- `votrix-backend` is a Python FastAPI service with Pydantic settings, SQLAlchemy async models, Alembic, structured logging, `run.sh`, `entrypoint.sh`, Docker, Cloud Build, and Cloud Run service manifests. This repo should follow that deployment style without modifying `votrix-backend`.
+- `votrix-backend` is a Python FastAPI service with Pydantic settings, SQLAlchemy async models, Alembic, structured logging, `run.sh`, `scripts/entrypoint.sh`, Docker, Cloud Build, and Cloud Run service manifests. This repo should follow that deployment style without modifying `votrix-backend`.
 
 Primary references:
 

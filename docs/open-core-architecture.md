@@ -112,7 +112,7 @@ This repo is allowed to contain production-ready self-hosting and reference depl
 
 ```text
 Dockerfile
-entrypoint.sh
+scripts/entrypoint.sh
 scripts/start-web.sh
 scripts/start-worker.sh
 deploy/gcp

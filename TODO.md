@@ -38,10 +38,14 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Contract Extraction
 
-- Extract exact request/response schemas from `anthropic-sdk-python` generated types for every Managed Agents resource.
-- Add contract tests using the official Anthropic Python SDK with `base_url` pointed at this service.
+- Maintain `tests/contract/test_anthropic_sdk_contract.py`, which points the official Anthropic Python SDK at this service with strict response validation.
+- Expand SDK contract coverage beyond the current passing surface: SDK beta resource discovery, agent CRUD, and files upload/list/download/delete.
+- Fix agent versions response shape. The official SDK currently expects agent-shaped version snapshots, while the MVP endpoint returns `agent_version` objects.
+- Fix environment response shape. The official SDK requires `description` in environment resources.
+- Fix session response shape. The official SDK requires fields such as `agent`, `resources`, `outcome_evaluations`, `stats`, `usage`, and `vault_ids`.
+- Fix skill multipart and response shapes. Skill responses do not yet match official SDK source/version/directory models exactly.
 - Verify pagination parameter names and envelopes against the SDK for every list endpoint.
-- Verify exact deleted-resource response shapes.
+- Verify exact deleted-resource response shapes for every resource family.
 
 ## Runtime Semantics
 

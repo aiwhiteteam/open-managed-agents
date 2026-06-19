@@ -23,9 +23,9 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | SSE stream | Implemented | DB polling-based replay and live polling. |
 | OpenAI Agents SDK runtime | Partial | Uses SDK when configured; deterministic local backend otherwise. OpenAI-compatible provider registry supports OpenAI, DeepSeek, MiniMax, custom providers, and capability maps. |
 | SandboxAgent mapping | Partial | Environment sandbox config maps to OpenAI Agents SDK `SandboxAgent` + `RunConfig.sandbox` for `unix_local`. Production cloud/self-hosted sandbox lifecycle is TODO. |
-| Exact Anthropic Python SDK contract tests | Planned | Requires extracting generated SDK types and route shapes. |
+| Exact Anthropic Python SDK contract tests | Partial | `tests/contract/test_anthropic_sdk_contract.py` points the official Anthropic Python SDK at this ASGI app with strict response validation. SDK surface, agent CRUD, and files upload/list/download/delete currently pass; agent versions, environments, sessions, and skills are tracked as expected failures. |
 | Skills API | Partial | Create/list/retrieve/delete plus versions and zip content download. S3-compatible object storage is supported, with R2 aliases retained. Uploads require one top-level directory and `SKILL.md` frontmatter with `name` and `description`; exact Claude archive contract tests are TODO. |
-| Files API | Partial | Upload/list/retrieve/download/delete with S3-compatible object storage. |
+| Files API | Partial | Upload/list/retrieve/download/delete with S3-compatible object storage. Basic official SDK strict response validation passes. Session resource copy semantics are still TODO. |
 | Vaults and credentials | Partial | Metadata CRUD only. Secure secret storage and OAuth flows are TODO. |
 | Memory stores | Partial | Postgres-backed path memories with unique path, optimistic version checks, version history with actor attribution, and redaction. Typed SDK schema parity and runtime memory tools are TODO. |
 | Deployments and runs | Partial | Metadata CRUD, cron/timezone validation, pause/unpause, manual run, and deployment-run session linkage. Real scheduler/retry worker semantics are TODO. |

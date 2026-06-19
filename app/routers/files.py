@@ -82,7 +82,6 @@ async def upload_file(
         data={
             "filename": file.filename,
             "mime_type": mime_type,
-            "scope": "managed_agents",
         },
         storage_backend=stored.backend,
         storage_key=stored.key,
@@ -156,7 +155,6 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
         data={
             "filename": body.filename or body.key.split("/")[-1],
             "mime_type": mime_type,
-            "scope": "managed_agents",
         },
         storage_backend=object_storage_backend_label(),
         storage_key=permanent_key,
@@ -207,7 +205,7 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_session)):
         await delete_stored_file(file.storage_key)
     await res_q.delete_resource(db, file)
     await db.commit()
-    return deleted_response(file, public_type="deleted_file")
+    return deleted_response(file, public_type="file_deleted")
 
 
 def _enforce_size_limit(size_bytes: int, max_bytes: int, *, label: str) -> None:

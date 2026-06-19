@@ -22,9 +22,8 @@ COPY --from=builder /app/app /app/app
 COPY --from=builder /app/alembic /app/alembic
 COPY --from=builder /app/alembic.ini /app/alembic.ini
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
-COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
 COPY --from=builder /app/scripts /app/scripts
 
 EXPOSE 8080
 
-CMD ["sh", "entrypoint.sh"]
+CMD ["sh", "scripts/entrypoint.sh"]

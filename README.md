@@ -166,6 +166,8 @@ The implemented Managed Agents-shaped route groups are:
 
 Several route groups are metadata-compatible skeletons rather than complete Claude-equivalent behavior. See [TODO.md](./TODO.md).
 
+Official Anthropic Python SDK compatibility checks live in [docs/anthropic-sdk-contract-tests.md](./docs/anthropic-sdk-contract-tests.md).
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
