@@ -96,16 +96,8 @@ This service follows the `votrix-backend` split:
 - Core resources are scoped by `workspace_id`. OSS self-hosted defaults to `wrkspc_default`; hosted/private layers should resolve callers to a workspace through an injected auth provider.
 - Memory stores are relational data: memory paths, content, metadata, optimistic versions, and version history live in Postgres.
 - S3-compatible object storage stores object bytes under `workspaces/{workspace_id}/...`: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
-- Local development can leave object storage empty with `OMA_STORAGE_BACKEND=database`; in staging/production use `OMA_STORAGE_BACKEND=s3` plus `S3_*` settings.
+- Local, staging, and production deployments should use `OMA_STORAGE_BACKEND=s3` plus `S3_*` settings for object bytes.
 - Cloudflare R2 works through the same S3-compatible path. `R2_*` settings are kept as backward-compatible aliases, not the preferred deployment surface.
-- A DB-blob to object-storage migration command is only needed for early/local data that was created before object storage was configured. It is not part of the normal production write path.
-
-Legacy DB blobs can be inspected and migrated with:
-
-```bash
-oma-migrate-blobs --limit 100
-oma-migrate-blobs --execute --limit 100
-```
 
 ## Minimal Flow
 

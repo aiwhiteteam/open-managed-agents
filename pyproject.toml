@@ -21,7 +21,6 @@ dependencies = [
 
 [project.scripts]
 oma-worker = "app.worker:main"
-oma-migrate-blobs = "app.storage_migration:main"
 
 [project.optional-dependencies]
 dev = [

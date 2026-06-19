@@ -1,9 +1,8 @@
 """S3-compatible object storage.
 
 Relational state lives in Postgres/SQLite. Object bytes live in S3-compatible
-storage when configured, with DB blob storage kept only as the local
-development fallback. Cloudflare R2 is supported through the same S3 path, with
-legacy R2_* settings kept as aliases.
+storage. Cloudflare R2 is supported through the same S3 path, with legacy R2_*
+settings kept as aliases.
 """
 
 from __future__ import annotations

@@ -9,9 +9,9 @@ Use [docs/claude-managed-agents-alignment.md](./docs/claude-managed-agents-align
 These are not just route coverage gaps. They are semantic contracts that can become expensive to fix later if core data models or runtime state machines drift away from Claude Managed Agents.
 
 - Keep exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core resolves every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
-- Model the full session state machine: `idle`, `running`, `rescheduling`, and `terminated`, including which operations are valid in each state.
-- Implement `requires_action` pauses for custom tool calls and resume execution from `user.custom_tool_result`.
-- Implement session-local agent configuration updates for tools and MCP servers without mutating the persisted agent version.
+- Complete durable session state machine semantics: real `rescheduling`, retry windows, and persisted OpenAI Agents SDK resume state.
+- Wire `requires_action` pauses for custom tools and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
+- Verify session-local agent configuration update request/response shapes against the official SDK.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events, with `processed_at = null` for queued input events.
 - Implement file/resource copy semantics. Uploaded files can be mounted into sessions, and session-produced files should become session-scoped file references.
@@ -49,9 +49,9 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Implement true resumable OpenAI Agents SDK `RunState` persistence.
 - Map OpenAI Agents SDK streaming events into the full Claude Managed Agents event union.
 - Add integration tests with mocked OpenAI-compatible endpoints for DeepSeek, MiniMax, and at least one custom provider.
-- Implement tool confirmation and custom tool result continuation semantics.
+- Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
 - Implement session `rescheduling` behavior for transient failures.
-- Enforce session archive/delete restrictions while running.
+- Expand session state-machine tests for worker crashes, queued continuation batches, and `user.interrupt`.
 
 ## Open-Core Hosted Layer
 

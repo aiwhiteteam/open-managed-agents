@@ -76,7 +76,7 @@ async def execute_work_item(work_id: str) -> None:
         data["finished_at"] = _utcnow_iso()
         data["session_status"] = session.status if session is not None else "missing"
         status = "completed"
-        if session is not None and session.status == "terminated":
+        if session is not None and session.status == "terminated" and (session.stop_reason or {}).get("type") == "error":
             status = "error"
         if work.status == "stopped":
             status = "stopped"

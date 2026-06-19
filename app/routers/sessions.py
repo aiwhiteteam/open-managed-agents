@@ -248,6 +248,7 @@ async def send_events(
     appended = []
     should_run = False
     should_interrupt = False
+    resolved_required_actions = False
     for event_input in body.events:
         payload = event_input.model_dump(mode="json")
         event = await events_q.append_event(
@@ -262,7 +263,8 @@ async def send_events(
         elif starts_work(event_input.type):
             should_run = True
         elif is_action_result(event_input.type):
-            should_run = await _all_pending_actions_resolved(db, session)
+            resolved_required_actions = await _all_pending_actions_resolved(db, session)
+            should_run = resolved_required_actions
 
     work = None
     if should_interrupt:
@@ -275,6 +277,8 @@ async def send_events(
             payload={"type": "session.status_idle", "status": SESSION_IDLE, "stop_reason": stop_reason},
         )
     elif should_run:
+        if resolved_required_actions:
+            await sessions_q.update_session(db, session, status=SESSION_IDLE, stop_reason={"type": "action_submitted"})
         work = await enqueue_session_run(
             db,
             session,

@@ -52,16 +52,16 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | Multiagent roster pinning | Coordinator `multiagent.agents` entries without `version` are resolved to the referenced agent's current active version at create/update time. | Implemented |
 | MCP server/toolset declaration | Agent `mcp_servers` and `mcp_toolset` entries must match. Secrets stay out of agent definitions and are supplied through session vaults. | Validation implemented; runtime MCP auth still partial |
 | Tools | Built-in toolset, MCP toolset, and custom tools are stored in agent versions. | Stored; runtime semantics partial |
-| Permission policies | Server-executed tools may require confirmation through `requires_action`; custom tools use application continuation through `user.custom_tool_result`. | TODO |
+| Permission policies | Server-executed tools may require confirmation through `requires_action`; custom tools use application continuation through `user.custom_tool_result`. | MVP event contract implemented; full runtime enforcement still partial |
 | Skills | Skills are separate filesystem-based resources referenced by agents; custom skill versions are pinned or `latest`. | Partial |
 | Environments | Environment config is not versioned; each session gets its own sandbox instance. Network and package policies are environment config. | Partial |
 | Cloud sandbox | Requires a production remote sandbox provider with network/package policy enforcement and filesystem state. | TODO |
 | Self-hosted sandbox | `self_hosted` environment acts as a work queue claimed by external workers. | Partial |
-| Session lifecycle | Session creation provisions the sandbox and starts `idle`; user/system events drive work. Valid states are `idle`, `running`, `rescheduling`, `terminated`. | Partial |
-| Session-local agent update | Session `agent.tools` and `agent.mcp_servers` can be fully replaced while idle without mutating agent versions. | TODO |
+| Session lifecycle | Session creation provisions the sandbox and starts `idle`; user/system events drive work. Valid states are `idle`, `running`, `rescheduling`, `terminated`. | Partial; core state guards implemented |
+| Session-local agent update | Session `agent.tools` and `agent.mcp_servers` can be fully replaced while idle without mutating agent versions. | Partial; session overlay implemented |
 | Event protocol | User/system events are inputs; session/span/agent events are outputs; queued input events may have `processed_at = null`. | Partial |
-| Custom tool continuation | `agent.custom_tool_use` pauses with `requires_action`; caller sends `user.custom_tool_result`. | TODO |
-| Tool confirmation | `agent.tool_use` or `agent.mcp_tool_use` may pause; caller sends `user.tool_confirmation`. | TODO |
+| Custom tool continuation | `agent.custom_tool_use` pauses with `requires_action`; caller sends `user.custom_tool_result`. | Partial; MVP continuation contract implemented |
+| Tool confirmation | `agent.tool_use` or `agent.mcp_tool_use` may pause; caller sends `user.tool_confirmation`. | Partial; MVP continuation contract implemented |
 | File resources | Uploaded files can be mounted into sessions; session mounts create session-scoped file references; mounts are read-only copies. | Partial |
 | Memory stores | Workspace-scoped text stores mount into a session as directories; memory changes produce immutable versions. | Partial |
 | Vault credentials | Vaults are workspace-scoped; secret values are write-only; runtime resolves and refreshes credentials. | Metadata only |
@@ -151,9 +151,9 @@ Webhooks and scheduled deployments are production semantics, not just CRUD:
 Prefer this order when closing compatibility gaps:
 
 1. Agent/version contract and multiagent roster pinning.
-2. Session state machine and archive/delete/update restrictions.
-3. Event protocol, including `processed_at`, `requires_action`, and full event unions.
-4. Custom tool continuation and tool confirmation.
+2. Complete session state machine edge cases and durable `rescheduling`.
+3. Complete event protocol, including processed input updates and full event unions.
+4. Wire custom tool continuation and tool confirmation into persisted OpenAI Agents SDK run state.
 5. File/session resource copy semantics.
 6. Durable queue/worker provider and Cloud Run-safe execution.
 7. Sandbox provider abstraction and cloud/self-hosted implementations.
@@ -164,4 +164,3 @@ Prefer this order when closing compatibility gaps:
 12. Outcomes/grader loop.
 13. Webhooks and deployment scheduler.
 14. Official Anthropic SDK contract tests.
-
