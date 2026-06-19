@@ -1,11 +1,15 @@
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
 from app.db.engine import get_session
+from app.db.queries import agents as agents_q
+from app.db.queries import environments as env_q
 from app.db.queries import resources as res_q
+from app.db.queries import sessions as sessions_q
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 
@@ -313,8 +317,7 @@ async def redact_memory_version(
 
 @router.post("/v1/deployments", status_code=201)
 async def create_deployment(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    data = body.model_dump(mode="json")
-    data.setdefault("status", "active")
+    data = _normalize_deployment_data(body.model_dump(mode="json"))
     return await _create_top_level(db, "deployment", data, status=data["status"])
 
 
@@ -330,7 +333,17 @@ async def retrieve_deployment(deployment_id: str, db: AsyncSession = Depends(get
 
 @router.post("/v1/deployments/{deployment_id}")
 async def update_deployment(deployment_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, deployment_id, "deployment", body.model_dump(mode="json"))
+    deployment = await _must_exist(db, deployment_id, "deployment")
+    data = _normalize_deployment_data(_merge_data(deployment.data, body.model_dump(mode="json")))
+    await res_q.update_resource(
+        db,
+        deployment,
+        data=data,
+        name=data.get("name") or data.get("display_name") or deployment.name,
+        status=data["status"],
+    )
+    await db.commit()
+    return resource_to_response(deployment, public_type="deployment")
 
 
 @router.post("/v1/deployments/{deployment_id}/archive")
@@ -359,15 +372,34 @@ async def unpause_deployment(deployment_id: str, db: AsyncSession = Depends(get_
 
 
 @router.post("/v1/deployments/{deployment_id}/run")
-async def run_deployment(deployment_id: str, db: AsyncSession = Depends(get_session)):
+async def run_deployment(
+    deployment_id: str,
+    body: GenericBody | None = Body(default=None),
+    db: AsyncSession = Depends(get_session),
+):
     deployment = await _must_exist(db, deployment_id, "deployment")
+    if deployment.status == "paused" or deployment.data.get("status") == "paused":
+        raise HTTPException(status_code=409, detail="Deployment is paused")
+    run_input = body.model_dump(mode="json") if body is not None else {}
+    attempt = int(run_input.get("attempt") or 1)
     run = await res_q.create_resource(
         db,
         resource_type="deployment_run",
         parent_id=deployment.id,
         status="queued",
-        data={"deployment_id": deployment.id, "status": "queued"},
+        data={
+            "deployment_id": deployment.id,
+            "status": "queued",
+            "attempt": attempt,
+            "trigger": run_input.get("trigger") or "manual",
+            "scheduled_for": run_input.get("scheduled_for"),
+        },
     )
+    session = await _maybe_create_deployment_session(db, deployment, run, run_input)
+    if session is not None:
+        run_data = dict(run.data)
+        run_data["session_id"] = session.id
+        await res_q.update_resource(db, run, data=run_data)
     await db.commit()
     return resource_to_response(run, public_type="deployment_run")
 
@@ -643,3 +675,84 @@ def _normalize_memory_path(value: Any) -> list[str]:
 
 def _path_key(path: list[str]) -> str:
     return "/".join(path)
+
+
+def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    status = str(normalized.get("status") or "active")
+    if status not in {"active", "paused", "archived"}:
+        raise HTTPException(status_code=422, detail="Deployment status must be active, paused, or archived")
+    normalized["status"] = status
+
+    schedule = normalized.get("schedule")
+    if schedule is not None:
+        if not isinstance(schedule, dict):
+            raise HTTPException(status_code=422, detail="Deployment schedule must be an object")
+        schedule_type = str(schedule.get("type") or "cron")
+        if schedule_type != "cron":
+            raise HTTPException(status_code=422, detail="Only cron deployment schedules are supported")
+        expression = str(schedule.get("cron") or schedule.get("expression") or "").strip()
+        if not _valid_cron_expression(expression):
+            raise HTTPException(status_code=422, detail="Deployment cron schedule must have 5 or 6 fields")
+        timezone = str(schedule.get("timezone") or "UTC")
+        try:
+            ZoneInfo(timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise HTTPException(status_code=422, detail=f"Unknown deployment schedule timezone: {timezone}") from exc
+        normalized["schedule"] = {
+            **schedule,
+            "type": "cron",
+            "cron": expression,
+            "timezone": timezone,
+            "enabled": bool(schedule.get("enabled", True)),
+        }
+    return normalized
+
+
+def _valid_cron_expression(expression: str) -> bool:
+    parts = expression.split()
+    return len(parts) in {5, 6} and all(parts)
+
+
+async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, run_input: dict[str, Any]):
+    data = deployment.data or {}
+    agent_ref = run_input.get("agent") or data.get("agent")
+    environment_id = run_input.get("environment_id") or data.get("environment_id")
+    if not agent_ref or not environment_id:
+        return None
+
+    agent_id, requested_version = _deployment_agent_ref(agent_ref)
+    agent = await agents_q.get_agent(db, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=422, detail="Deployment agent not found")
+    version = requested_version or agent.active_version
+    agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=version)
+    if agent_version is None:
+        raise HTTPException(status_code=422, detail="Deployment agent version not found")
+    environment = await env_q.get_environment(db, str(environment_id))
+    if environment is None or environment.deleted_at is not None:
+        raise HTTPException(status_code=422, detail="Deployment environment not found")
+
+    metadata = dict(run_input.get("metadata") or {})
+    metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
+    return await sessions_q.create_session(
+        db,
+        agent=agent,
+        agent_version=version,
+        environment=environment,
+        title=run_input.get("title") or data.get("title") or data.get("name") or deployment.name,
+        metadata=metadata,
+        vault_ids=run_input.get("vault_ids") or data.get("vault_ids") or [],
+    )
+
+
+def _deployment_agent_ref(value: Any) -> tuple[str, int | None]:
+    if isinstance(value, str):
+        return value, None
+    if isinstance(value, dict):
+        agent_id = value.get("id") or value.get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=422, detail="Deployment agent reference requires id")
+        version = value.get("version")
+        return str(agent_id), int(version) if version is not None else None
+    raise HTTPException(status_code=422, detail="Deployment agent must be a string or object")
