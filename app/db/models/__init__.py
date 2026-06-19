@@ -1,5 +1,5 @@
 from app.db.models._base import Base, TimestampMixin
-from app.db.models.domain import Agent, AgentVersion, Environment, ManagedResource, ManagedSession, SessionEvent
+from app.db.models.domain import Agent, AgentVersion, Environment, ManagedResource, ManagedSession, SessionEvent, Workspace
 
 __all__ = [
     "Agent",
@@ -10,4 +10,5 @@ __all__ = [
     "ManagedSession",
     "SessionEvent",
     "TimestampMixin",
+    "Workspace",
 ]

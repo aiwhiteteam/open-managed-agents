@@ -2,6 +2,38 @@
 
 This file tracks Claude Managed Agents compatibility gaps after the MVP API pass.
 
+## Claude Compatibility Risk Register
+
+These are not just route coverage gaps. They are semantic contracts that can become expensive to fix later if core data models or runtime state machines drift away from Claude Managed Agents.
+
+- Implement exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core should resolve every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
+- Model the full session state machine: `idle`, `running`, `rescheduling`, and `terminated`, including which operations are valid in each state.
+- Implement `requires_action` pauses for custom tool calls and resume execution from `user.custom_tool_result`.
+- Implement session-local agent configuration updates for tools and MCP servers without mutating the persisted agent version.
+- Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters should be pinned rather than auto-updated.
+- Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events, with `processed_at = null` for queued input events.
+- Implement file/resource copy semantics. Uploaded files can be mounted into sessions, and session-produced files should become session-scoped file references.
+- Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
+- Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through vault/profile context.
+- Implement vault credential lifecycle: enrollment, refresh, resolution, revocation/archive purge, secret redaction, and webhook emission.
+- Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events.
+- Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent.
+- Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
+- Implement deployment scheduler semantics: cron/timezone validation, upcoming runs, autonomous session creation, retries, and lease-safe workers.
+- Implement sandbox/environment policy enforcement through provider interfaces: network allowlists, MCP/package-manager exceptions, resource limits, and production cloud sandbox backends.
+
+## Design Invariants / Do Not Break
+
+- OSS core only knows `workspace_id`; organization, billing, seats, SSO, invites, RBAC, hosted admin UI, and metering belong in a private hosted layer.
+- Public Managed Agents routes remain workspace-path-free, for example `/v1/agents`, not `/v1/workspaces/{workspace_id}/agents`.
+- Hosted SaaS should wrap core through `create_app(...)` and provider interfaces, not fork core or rely on an HTTP-proxy-only wrapper.
+- Core must never import private hosted modules.
+- Every persisted Managed Agents resource must be scoped by `workspace_id`.
+- Object storage keys must include `workspaces/{workspace_id}/...`.
+- Provider interfaces should stay narrow and replaceable: auth, quota, audit logging, secret manager, sandbox, queue, webhook delivery, and object storage.
+- Default OSS providers should remain self-hosted friendly and usable with a single default workspace.
+- Add cross-workspace non-visibility tests for every new major resource family.
+
 ## Contract Extraction
 
 - Extract exact request/response schemas from `anthropic-sdk-python` generated types for every Managed Agents resource.
@@ -18,6 +50,14 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 - Implement tool confirmation and custom tool result continuation semantics.
 - Implement session `rescheduling` behavior for transient failures.
 - Enforce session archive/delete restrictions while running.
+
+## Open-Core Hosted Layer
+
+- Keep core resource tables scoped by `workspace_id`; do not add organization/billing/RBAC dependencies to core.
+- Add DB-backed API keys/service accounts as an optional provider, still resolving to `CurrentWorkspace`.
+- Add provider interfaces for quota, audit logging, secret manager, and hosted sandbox fleet.
+- Add cross-workspace isolation tests for every new route group.
+- Implement organizations, members, billing, SSO, and RBAC only in a hosted/private layer that imports core.
 
 ## Sandbox And Environments
 

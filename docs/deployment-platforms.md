@@ -24,6 +24,7 @@ This project follows a portable deployment shape:
 | Railway | `deploy/railway/` | Fast MVP deployment with Docker and service-level start commands. |
 | Fly.io | `deploy/fly/fly.toml` | Good for multi-region or long-running process deployments. |
 | AWS ECS/Fargate | `deploy/aws/ecs-fargate/` | Enterprise AWS baseline; more infrastructure is required. |
+| Docker Compose | `deploy/docker-compose/compose.yaml` | Local integration, simple VPS, and customer self-hosted smoke tests. |
 
 ## Portability Rules
 

@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: open_managed_agents
+      POSTGRES_USER: open_managed_agents
+      POSTGRES_PASSWORD: open_managed_agents
+    volumes:
+      - open-managed-agents-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U open_managed_agents -d open_managed_agents"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: scripts/migrate.sh
+    environment:
+      DATABASE_URL: postgresql+asyncpg://open_managed_agents:open_managed_agents@db:5432/open_managed_agents
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - migrate
+
+  web:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: scripts/start-web.sh
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://open_managed_agents:open_managed_agents@db:5432/open_managed_agents
+      OMA_RUNTIME_BACKEND: local
+      OMA_STORAGE_BACKEND: database
+      OMA_REQUIRE_BETA_HEADER: "true"
+      OMA_REQUIRE_ANTHROPIC_VERSION_HEADER: "true"
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: scripts/start-worker.sh
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+asyncpg://open_managed_agents:open_managed_agents@db:5432/open_managed_agents
+      OMA_RUNTIME_BACKEND: local
+      OMA_STORAGE_BACKEND: database
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - worker
+
+volumes:
+  open-managed-agents-postgres:

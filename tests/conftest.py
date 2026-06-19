@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from app.config import get_settings
 from app.db.engine import get_engine, reset_engine_for_tests
 from app.db.models import Base
+from app.workspace import default_workspace, set_current_workspace
 
 TEST_HEADERS = {
     "anthropic-beta": "managed-agents-2026-04-01",
@@ -26,6 +27,7 @@ async def test_database(tmp_path, monkeypatch):
     monkeypatch.setenv("OMA_STORAGE_BACKEND", "database")
     monkeypatch.setenv("OMA_REQUIRE_BETA_HEADER", "true")
     monkeypatch.setenv("OMA_REQUIRE_ANTHROPIC_VERSION_HEADER", "true")
+    set_current_workspace(default_workspace())
     get_settings.cache_clear()
     await reset_engine_for_tests()
     engine = get_engine()
@@ -36,6 +38,7 @@ async def test_database(tmp_path, monkeypatch):
         await conn.run_sync(Base.metadata.drop_all)
     await reset_engine_for_tests()
     get_settings.cache_clear()
+    set_current_workspace(default_workspace())
     os.environ.pop("DATABASE_URL", None)
 
 

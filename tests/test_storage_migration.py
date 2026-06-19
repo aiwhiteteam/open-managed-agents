@@ -46,7 +46,7 @@ async def test_legacy_blob_migration_uploads_and_clears_db_content(monkeypatch):
 
     calls = []
 
-    async def fake_save_file_bytes(data, mime_type, *, namespace, filename, category):
+    async def fake_save_file_bytes(data, mime_type, *, namespace, filename, category, workspace_id=None):
         calls.append(
             {
                 "data": data,
@@ -54,6 +54,7 @@ async def test_legacy_blob_migration_uploads_and_clears_db_content(monkeypatch):
                 "namespace": namespace,
                 "filename": filename,
                 "category": category,
+                "workspace_id": workspace_id,
             }
         )
         return StoredObject(
@@ -80,6 +81,7 @@ async def test_legacy_blob_migration_uploads_and_clears_db_content(monkeypatch):
             "namespace": "skill_version/skill_123",
             "filename": "skill.zip",
             "category": "skill_version",
+            "workspace_id": "wrkspc_default",
         }
     ]
 

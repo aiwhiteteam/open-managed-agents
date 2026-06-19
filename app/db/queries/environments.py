@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Environment
 from app.ids import new_id
+from app.workspace import workspace_id_or_default
 
 
 async def create_environment(
@@ -14,9 +15,11 @@ async def create_environment(
     name: str,
     config: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    workspace_id: str | None = None,
 ) -> Environment:
     environment = Environment(
         id=new_id("env"),
+        workspace_id=workspace_id_or_default(workspace_id),
         name=name,
         config=config,
         metadata_=metadata or {},
@@ -26,15 +29,33 @@ async def create_environment(
     return environment
 
 
-async def get_environment(db: AsyncSession, environment_id: str) -> Environment | None:
-    result = await db.execute(select(Environment).where(Environment.id == environment_id))
+async def get_environment(
+    db: AsyncSession,
+    environment_id: str,
+    *,
+    workspace_id: str | None = None,
+) -> Environment | None:
+    result = await db.execute(
+        select(Environment).where(
+            Environment.id == environment_id,
+            Environment.workspace_id == workspace_id_or_default(workspace_id),
+        )
+    )
     return result.scalar_one_or_none()
 
 
-async def list_environments(db: AsyncSession, *, limit: int = 50) -> list[Environment]:
+async def list_environments(
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    workspace_id: str | None = None,
+) -> list[Environment]:
     result = await db.execute(
         select(Environment)
-        .where(Environment.deleted_at.is_(None))
+        .where(
+            Environment.deleted_at.is_(None),
+            Environment.workspace_id == workspace_id_or_default(workspace_id),
+        )
         .order_by(Environment.created_at.desc())
         .limit(limit)
     )
@@ -68,4 +89,3 @@ async def archive_environment(db: AsyncSession, environment: Environment) -> Env
 async def delete_environment(db: AsyncSession, environment: Environment) -> None:
     environment.deleted_at = datetime.now(timezone.utc)
     await db.flush()
-

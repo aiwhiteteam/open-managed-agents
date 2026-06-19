@@ -16,8 +16,21 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
+        "workspaces",
+        sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("slug", sa.String(length=255), nullable=False),
+        sa.Column("name", sa.String(length=255), nullable=False),
+        sa.Column("metadata", sa.JSON(), nullable=False),
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("slug"),
+    )
+    op.create_table(
         "agents",
         sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("workspace_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("active_version", sa.Integer(), nullable=False),
@@ -30,6 +43,7 @@ def upgrade() -> None:
     op.create_table(
         "environments",
         sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("workspace_id", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("config", sa.JSON(), nullable=False),
         sa.Column("metadata", sa.JSON(), nullable=False),
@@ -38,11 +52,12 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("name"),
+        sa.UniqueConstraint("workspace_id", "name", name="uq_environments_workspace_name"),
     )
     op.create_table(
         "agent_versions",
         sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("workspace_id", sa.String(length=64), nullable=False),
         sa.Column("agent_id", sa.String(length=64), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
@@ -60,10 +75,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["agent_id"], ["agents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),
+        sa.UniqueConstraint("workspace_id", "agent_id", "version", name="uq_agent_versions_workspace_agent_version"),
     )
     op.create_table(
         "sessions",
         sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("workspace_id", sa.String(length=64), nullable=False),
         sa.Column("agent_id", sa.String(length=64), nullable=False),
         sa.Column("agent_version", sa.Integer(), nullable=False),
         sa.Column("environment_id", sa.String(length=64), nullable=False),
@@ -87,6 +104,7 @@ def upgrade() -> None:
     op.create_table(
         "session_events",
         sa.Column("id", sa.String(length=64), nullable=False),
+        sa.Column("workspace_id", sa.String(length=64), nullable=False),
         sa.Column("session_id", sa.String(length=64), nullable=False),
         sa.Column("seq", sa.Integer(), nullable=False),
         sa.Column("type", sa.String(length=128), nullable=False),
@@ -97,13 +115,28 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("session_id", "seq", name="uq_session_events_session_seq"),
     )
+    op.execute(
+        "INSERT INTO workspaces (id, slug, name, metadata) "
+        "VALUES ('wrkspc_default', 'default', 'Default Workspace', '{}')"
+    )
+    op.create_index(op.f("ix_agents_workspace_id"), "agents", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_agent_versions_workspace_id"), "agent_versions", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_environments_workspace_id"), "environments", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_sessions_workspace_id"), "sessions", ["workspace_id"], unique=False)
+    op.create_index(op.f("ix_session_events_workspace_id"), "session_events", ["workspace_id"], unique=False)
     op.create_index(op.f("ix_session_events_type"), "session_events", ["type"], unique=False)
 
 
 def downgrade() -> None:
     op.drop_index(op.f("ix_session_events_type"), table_name="session_events")
+    op.drop_index(op.f("ix_session_events_workspace_id"), table_name="session_events")
+    op.drop_index(op.f("ix_sessions_workspace_id"), table_name="sessions")
+    op.drop_index(op.f("ix_environments_workspace_id"), table_name="environments")
+    op.drop_index(op.f("ix_agent_versions_workspace_id"), table_name="agent_versions")
+    op.drop_index(op.f("ix_agents_workspace_id"), table_name="agents")
     op.drop_table("session_events")
     op.drop_table("sessions")
     op.drop_table("agent_versions")
     op.drop_table("environments")
     op.drop_table("agents")
+    op.drop_table("workspaces")

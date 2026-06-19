@@ -5,12 +5,24 @@ from sqlalchemy import DateTime, ForeignKey, Integer, JSON, LargeBinary, String,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models._base import Base, TimestampMixin
+from app.workspace import DEFAULT_WORKSPACE_ID
+
+
+class Workspace(TimestampMixin, Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Agent(TimestampMixin, Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     active_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -26,9 +38,13 @@ class Agent(TimestampMixin, Base):
 
 class AgentVersion(TimestampMixin, Base):
     __tablename__ = "agent_versions"
-    __table_args__ = (UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),)
+    __table_args__ = (
+        UniqueConstraint("agent_id", "version", name="uq_agent_versions_agent_version"),
+        UniqueConstraint("workspace_id", "agent_id", "version", name="uq_agent_versions_workspace_agent_version"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -47,9 +63,11 @@ class AgentVersion(TimestampMixin, Base):
 
 class Environment(TimestampMixin, Base):
     __tablename__ = "environments"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_environments_workspace_name"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -60,6 +78,7 @@ class ManagedSession(TimestampMixin, Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False)
     agent_version: Mapped[int] = mapped_column(Integer, nullable=False)
     environment_id: Mapped[str] = mapped_column(ForeignKey("environments.id"), nullable=False)
@@ -81,6 +100,7 @@ class SessionEvent(Base):
     __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_session_events_session_seq"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -102,9 +122,17 @@ class ManagedResource(TimestampMixin, Base):
             "version",
             name="uq_managed_resources_type_parent_version",
         ),
+        UniqueConstraint(
+            "workspace_id",
+            "resource_type",
+            "parent_id",
+            "version",
+            name="uq_managed_resources_workspace_type_parent_version",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     resource_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
     version: Mapped[int | None] = mapped_column(Integer)

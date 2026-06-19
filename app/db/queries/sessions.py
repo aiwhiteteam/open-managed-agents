@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Agent, Environment, ManagedSession
 from app.ids import new_id
+from app.workspace import workspace_id_or_default
 
 
 async def create_session(
@@ -17,9 +18,12 @@ async def create_session(
     title: str | None = None,
     metadata: dict[str, Any] | None = None,
     vault_ids: list[str] | None = None,
+    workspace_id: str | None = None,
 ) -> ManagedSession:
+    scoped_workspace_id = workspace_id_or_default(workspace_id or agent.workspace_id)
     session = ManagedSession(
         id=new_id("sess"),
+        workspace_id=scoped_workspace_id,
         agent_id=agent.id,
         agent_version=agent_version,
         environment_id=environment.id,
@@ -34,15 +38,33 @@ async def create_session(
     return session
 
 
-async def get_session(db: AsyncSession, session_id: str) -> ManagedSession | None:
-    result = await db.execute(select(ManagedSession).where(ManagedSession.id == session_id))
+async def get_session(
+    db: AsyncSession,
+    session_id: str,
+    *,
+    workspace_id: str | None = None,
+) -> ManagedSession | None:
+    stmt = select(ManagedSession).where(ManagedSession.id == session_id)
+    if workspace_id is not None:
+        stmt = stmt.where(ManagedSession.workspace_id == workspace_id)
+    else:
+        stmt = stmt.where(ManagedSession.workspace_id == workspace_id_or_default())
+    result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
-async def list_sessions(db: AsyncSession, *, limit: int = 50) -> list[ManagedSession]:
+async def list_sessions(
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    workspace_id: str | None = None,
+) -> list[ManagedSession]:
     result = await db.execute(
         select(ManagedSession)
-        .where(ManagedSession.deleted_at.is_(None))
+        .where(
+            ManagedSession.deleted_at.is_(None),
+            ManagedSession.workspace_id == workspace_id_or_default(workspace_id),
+        )
         .order_by(ManagedSession.created_at.desc())
         .limit(limit)
     )
@@ -86,4 +108,3 @@ async def delete_session(db: AsyncSession, session: ManagedSession) -> None:
     session.deleted_at = datetime.now(timezone.utc)
     session.status = "deleted"
     await db.flush()
-

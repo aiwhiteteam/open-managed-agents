@@ -10,8 +10,17 @@ The first version is intentionally small:
 - SSE replay/stream endpoint.
 - Runtime adapter that uses OpenAI Agents SDK when configured, and a deterministic local runtime otherwise.
 - Resource APIs for Skills, Files, Vaults, Memory Stores, Deployments, Deployment Runs, User Profiles, session resources, and self-hosted environment work queue stubs.
+- Workspace-scoped core design: self-hosted defaults to one workspace, while hosted/org SaaS can wrap the core through provider injection.
 
 See [plan.md](./plan.md) for the research notes, compatibility boundaries, and implementation roadmap.
+
+For the open-core boundary and hosted SaaS compatibility contract, see [docs/open-core-architecture.md](./docs/open-core-architecture.md). Hosted/private layers should compose the core through the stable package import:
+
+```python
+from open_managed_agents import create_app
+
+app = create_app(auth_provider=HostedOrgAuthProvider())
+```
 
 ## Local Run
 
@@ -82,10 +91,10 @@ The default container command starts only the web process. Run migrations as a r
 
 This service follows the `votrix-backend` split:
 
-- Relational state uses `DATABASE_URL` and can point at Supabase Postgres or any compatible Postgres deployment.
+- Relational state uses `DATABASE_URL` and can point at any compatible Postgres deployment.
+- Core resources are scoped by `workspace_id`. OSS self-hosted defaults to `wrkspc_default`; hosted/private layers should resolve callers to a workspace through an injected auth provider.
 - Memory stores are relational data: memory paths, content, metadata, optimistic versions, and version history live in Postgres.
-- Supabase Storage is not used.
-- S3-compatible object storage stores object bytes: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
+- S3-compatible object storage stores object bytes under `workspaces/{workspace_id}/...`: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
 - Local development can leave object storage empty with `OMA_STORAGE_BACKEND=database`; in staging/production use `OMA_STORAGE_BACKEND=s3` plus `S3_*` settings.
 - Cloudflare R2 works through the same S3-compatible path. `R2_*` settings are kept as backward-compatible aliases, not the preferred deployment surface.
 - A DB-blob to object-storage migration command is only needed for early/local data that was created before object storage was configured. It is not part of the normal production write path.
@@ -164,6 +173,10 @@ The implemented Managed Agents-shaped route groups are:
 
 Several route groups are metadata-compatible skeletons rather than complete Claude-equivalent behavior. See [TODO.md](./TODO.md).
 
+## License
+
+MIT. See [LICENSE](./LICENSE).
+
 ## Deployment Targets
 
 The root `Dockerfile` is the source of truth for every platform. Provider-specific files live under `deploy/`:
@@ -173,5 +186,6 @@ The root `Dockerfile` is the source of truth for every platform. Provider-specif
 - `deploy/railway`: Railway web and worker config-as-code templates.
 - `deploy/fly`: Fly.io app config with web, worker, and release migration.
 - `deploy/aws`: AWS ECS/Fargate Terraform reference for web and worker services.
+- `deploy/docker-compose`: Docker Compose for local integration, simple VPS, and self-hosted smoke tests.
 
-Set `DATABASE_URL`, `OPENAI_API_KEY`, `OMA_API_KEYS`, `OMA_STORAGE_BACKEND=s3`, and all `S3_*` values as platform secrets or environment variables. `DATABASE_URL` can point at Supabase Postgres, Render/Railway/Fly Postgres, Cloud SQL, RDS, or any compatible Postgres deployment. Object bytes should point at S3-compatible object storage.
+Set `DATABASE_URL`, `OPENAI_API_KEY`, `OMA_API_KEYS`, `OMA_STORAGE_BACKEND=s3`, and all `S3_*` values as platform secrets or environment variables. `DATABASE_URL` can point at Render/Railway/Fly Postgres, Cloud SQL, RDS, or any compatible Postgres deployment. Object bytes should point at S3-compatible object storage.

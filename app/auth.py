@@ -1,8 +1,16 @@
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, Protocol, runtime_checkable
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from app.config import get_settings
+from app.workspace import (
+    CurrentWorkspace,
+    DEFAULT_WORKSPACE_ID,
+    current_workspace,
+    default_workspace,
+    set_current_workspace,
+)
 
 CMA_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
 OPEN_MANAGED_AGENTS_BETA = "open-managed-agents-2026-04-01"
@@ -10,7 +18,42 @@ ACCEPTED_MANAGED_AGENTS_BETAS = {CMA_MANAGED_AGENTS_BETA, OPEN_MANAGED_AGENTS_BE
 ANTHROPIC_API_VERSION = "2023-06-01"
 
 
+@dataclass(frozen=True)
+class RequestCredentials:
+    x_api_key: str | None
+    authorization: str | None
+
+
+@runtime_checkable
+class AuthProvider(Protocol):
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
+        ...
+
+
+class EnvApiKeyAuthProvider:
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
+        settings = get_settings()
+        workspace = default_workspace()
+        if not settings.oma_api_keys:
+            return workspace
+
+        token = credentials.x_api_key or _bearer_token(credentials.authorization)
+        if token not in settings.oma_api_keys:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        workspace_id = (
+            settings.oma_api_key_workspaces.get(token)
+            or settings.oma_default_workspace_id
+            or DEFAULT_WORKSPACE_ID
+        )
+        return CurrentWorkspace(
+            id=workspace_id,
+            slug="default" if workspace_id == DEFAULT_WORKSPACE_ID else workspace_id,
+            source="api_key",
+        )
+
+
 async def require_api_access(
+    request: Request,
     x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None,
     authorization: Annotated[str | None, Header(alias="authorization")] = None,
     anthropic_beta: Annotated[str | None, Header(alias="anthropic-beta")] = None,
@@ -43,12 +86,21 @@ async def require_api_access(
             detail=f"Missing required Anthropic API version header: {ANTHROPIC_API_VERSION}",
         )
 
-    if not settings.oma_api_keys:
-        return
+    provider: AuthProvider = getattr(request.app.state, "auth_provider", EnvApiKeyAuthProvider())
+    workspace = await provider.authenticate(
+        request,
+        RequestCredentials(x_api_key=x_api_key, authorization=authorization),
+    )
+    request.state.current_workspace = workspace
+    set_current_workspace(workspace)
+    return workspace
 
-    token = x_api_key or _bearer_token(authorization)
-    if token not in settings.oma_api_keys:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+
+async def get_current_workspace(request: Request) -> CurrentWorkspace:
+    workspace = getattr(request.state, "current_workspace", None)
+    if workspace is not None:
+        return workspace
+    return current_workspace()
 
 
 def _split_header_values(value: str | None) -> set[str]:

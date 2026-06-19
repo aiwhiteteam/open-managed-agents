@@ -18,6 +18,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.ids import new_id
+from app.workspace import workspace_id_or_default
 
 _session: Any | None = None
 _lock = asyncio.Lock()
@@ -147,13 +148,15 @@ def object_key(
     category: str,
     filename: str,
     content_sha256: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    safe_workspace = _safe_path_part(workspace_id_or_default(workspace_id))
     safe_namespace = _safe_path_part(namespace or "oma")
     safe_category = _safe_path_part(category or "general")
     safe_filename = _safe_filename(filename)
     unique = content_sha256[:16] if content_sha256 else new_id("obj")
-    return f"{safe_namespace}/{safe_category}/{date_str}/{unique}_{safe_filename}"
+    return f"workspaces/{safe_workspace}/{safe_namespace}/{safe_category}/{date_str}/{unique}_{safe_filename}"
 
 
 async def save_file_bytes(
@@ -163,6 +166,7 @@ async def save_file_bytes(
     namespace: str,
     filename: str,
     category: str = "general",
+    workspace_id: str | None = None,
 ) -> StoredObject:
     """Upload bytes to object storage and return object metadata."""
     config = _require_object_storage()
@@ -173,6 +177,7 @@ async def save_file_bytes(
         category=category,
         filename=filename,
         content_sha256=sha256,
+        workspace_id=workspace_id,
     )
     async with _get_session().client(**_client_kwargs()) as client:
         await client.put_object(

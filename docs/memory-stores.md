@@ -1,6 +1,6 @@
 # Memory Stores
 
-Memory Store data lives in the relational database. In production this means a Postgres-compatible database through `DATABASE_URL`, including but not limited to Supabase Postgres.
+Memory Store data lives in the relational database. In production this means a Postgres-compatible database through `DATABASE_URL`.
 
 Object storage is not the source of truth for memory records. S3-compatible storage should only be used for optional large binary memory attachments, exported snapshots, or artifact bundles.
 

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedResource
 from app.ids import new_id
+from app.workspace import workspace_id_or_default
 
 
 PREFIXES = {
@@ -43,9 +44,11 @@ async def create_resource(
     storage_url: str | None = None,
     size_bytes: int | None = None,
     sha256: str | None = None,
+    workspace_id: str | None = None,
 ) -> ManagedResource:
     resource = ManagedResource(
         id=new_id(PREFIXES.get(resource_type, "res")),
+        workspace_id=workspace_id_or_default(workspace_id),
         resource_type=resource_type,
         parent_id=parent_id,
         version=version,
@@ -73,8 +76,12 @@ async def get_resource(
     resource_type: str | None = None,
     parent_id: str | None = None,
     include_deleted: bool = False,
+    workspace_id: str | None = None,
 ) -> ManagedResource | None:
-    stmt = select(ManagedResource).where(ManagedResource.id == resource_id)
+    stmt = select(ManagedResource).where(
+        ManagedResource.id == resource_id,
+        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+    )
     if resource_type is not None:
         stmt = stmt.where(ManagedResource.resource_type == resource_type)
     if parent_id is not None:
@@ -92,11 +99,13 @@ async def get_resource_version(
     parent_id: str,
     version: int,
     include_deleted: bool = False,
+    workspace_id: str | None = None,
 ) -> ManagedResource | None:
     stmt = select(ManagedResource).where(
         ManagedResource.resource_type == resource_type,
         ManagedResource.parent_id == parent_id,
         ManagedResource.version == version,
+        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
     )
     if not include_deleted:
         stmt = stmt.where(ManagedResource.deleted_at.is_(None))
@@ -111,12 +120,14 @@ async def list_resources(
     parent_id: str | None = None,
     limit: int = 50,
     include_archived: bool = True,
+    workspace_id: str | None = None,
 ) -> list[ManagedResource]:
     stmt = (
         select(ManagedResource)
         .where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.deleted_at.is_(None),
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
         )
         .order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
         .limit(limit)
@@ -185,11 +196,18 @@ async def delete_resource(db: AsyncSession, resource: ManagedResource) -> Manage
     return resource
 
 
-async def next_version(db: AsyncSession, *, resource_type: str, parent_id: str) -> int:
+async def next_version(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    parent_id: str,
+    workspace_id: str | None = None,
+) -> int:
     result = await db.execute(
         select(func.max(ManagedResource.version)).where(
             ManagedResource.resource_type == resource_type,
             ManagedResource.parent_id == parent_id,
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
         )
     )
     return int(result.scalar_one_or_none() or 0) + 1

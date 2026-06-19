@@ -6,6 +6,7 @@ from app.storage import (
     is_object_storage_backend,
     object_storage_backend_label,
     object_storage_configured,
+    object_key,
     public_url_for_key,
     r2_configured,
     should_store_in_object_storage,
@@ -28,6 +29,13 @@ def test_s3_object_storage_configuration(monkeypatch):
     assert object_storage_backend_label() == "s3"
     assert public_url_for_key("agents/file.txt") == "https://cdn.example.com/oma-files/agents/file.txt"
     assert is_object_storage_backend("s3") is True
+    assert object_key(
+        namespace="oma",
+        category="files",
+        filename="file.txt",
+        content_sha256="abcdef1234567890",
+        workspace_id="ws_test",
+    ).startswith("workspaces/ws_test/oma/files/")
 
 
 def test_r2_legacy_alias_configuration(monkeypatch):

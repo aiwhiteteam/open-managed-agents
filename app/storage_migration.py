@@ -68,6 +68,7 @@ async def migrate_legacy_blobs(
                 namespace=_resource_namespace(resource),
                 filename=resource.filename or resource.name or resource.id,
                 category=resource.resource_type,
+                workspace_id=resource.workspace_id,
             )
             resource.content = None
             resource.storage_backend = stored.backend
