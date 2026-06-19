@@ -1,6 +1,6 @@
 from app.config import get_settings
 from app.runtime.providers import provider_capabilities, resolve_runtime_provider, runtime_provider_configured
-from app.runtime.runner import _model_settings_for_provider
+from app.runtime.runner import _model_settings_for_provider, _sdk_tools_for_provider
 
 
 def test_deepseek_provider_resolution(monkeypatch):
@@ -82,6 +82,44 @@ def test_provider_capability_map_filters_model_settings(monkeypatch):
     assert "reasoning" in removed
 
 
+def test_provider_capability_map_filters_hosted_tools(monkeypatch):
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
+    get_settings.cache_clear()
+    config = resolve_runtime_provider({"provider": "minimax", "id": "MiniMax-M3"})
+
+    sdk_tools, enabled, filtered = _sdk_tools_for_provider(
+        [{"type": "web_search"}, {"type": "agent_toolset_20260401"}],
+        [],
+        config.capabilities,
+        _sdk_tool_classes(),
+    )
+
+    assert sdk_tools == []
+    assert enabled == []
+    assert filtered[0]["reason"] == "provider_does_not_support_hosted_tools"
+    assert filtered[1]["reason"] == "unsupported_tool_type"
+
+
+def test_openai_hosted_tools_are_mapped(monkeypatch):
+    monkeypatch.setenv("OPENAI_USE_RESPONSES", "true")
+    get_settings.cache_clear()
+    capabilities = provider_capabilities("openai")
+
+    sdk_tools, enabled, filtered = _sdk_tools_for_provider(
+        [
+            {"type": "web_search", "search_context_size": "low"},
+            {"type": "file_search", "vector_store_ids": ["vs_123"]},
+        ],
+        [{"name": "docs", "server_url": "https://mcp.example.com"}],
+        capabilities,
+        _sdk_tool_classes(),
+    )
+
+    assert [tool.name for tool in sdk_tools] == ["web_search", "file_search", "hosted_mcp"]
+    assert [tool["type"] for tool in enabled] == ["web_search", "file_search", "mcp"]
+    assert filtered == []
+
+
 def test_unconfigured_provider_falls_back_in_auto(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     get_settings.cache_clear()
@@ -98,3 +136,25 @@ def test_claude_model_id_falls_back_to_default_openai_model(monkeypatch):
 
     assert config.provider == "openai"
     assert config.model_id == "gpt-5.5"
+
+
+def _sdk_tool_classes():
+    from agents import (
+        CodeInterpreterTool,
+        FileSearchTool,
+        HostedMCPTool,
+        ImageGenerationTool,
+        WebSearchTool,
+    )
+    from agents.tool import CodeInterpreter, ImageGeneration, Mcp
+
+    return {
+        "WebSearchTool": WebSearchTool,
+        "FileSearchTool": FileSearchTool,
+        "CodeInterpreterTool": CodeInterpreterTool,
+        "CodeInterpreter": CodeInterpreter,
+        "HostedMCPTool": HostedMCPTool,
+        "Mcp": Mcp,
+        "ImageGenerationTool": ImageGenerationTool,
+        "ImageGeneration": ImageGeneration,
+    }

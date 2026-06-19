@@ -1,8 +1,8 @@
 # Memory Stores
 
-Memory Store data lives in the relational database. In production this means Supabase Postgres through `DATABASE_URL`.
+Memory Store data lives in the relational database. In production this means a Postgres-compatible database through `DATABASE_URL`, including but not limited to Supabase Postgres.
 
-R2 is not the source of truth for memory records. R2 should only be used for optional large binary memory attachments, exported snapshots, or artifact bundles.
+Object storage is not the source of truth for memory records. S3-compatible storage should only be used for optional large binary memory attachments, exported snapshots, or artifact bundles.
 
 ## Current MVP Semantics
 
@@ -34,4 +34,4 @@ The string shorthand is also accepted:
 
 ## Storage Boundary
 
-Use Postgres for the memory store itself. Use R2 only for optional large binary artifacts related to a memory, such as an exported archive or external attachment.
+Use Postgres for the memory store itself. Use S3-compatible object storage only for optional large binary artifacts related to a memory, such as an exported archive or external attachment.

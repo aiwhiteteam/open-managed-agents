@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
-  alembic upgrade head
+if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
+  scripts/migrate.sh
 fi
 
-exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --workers "${WEB_CONCURRENCY:-1}"
+exec scripts/start-web.sh

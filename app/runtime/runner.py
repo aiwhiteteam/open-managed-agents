@@ -162,9 +162,20 @@ async def _execute(version, history, environment_config: dict[str, Any] | None =
 
 
 async def _execute_openai(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
-    from agents import Agent, ModelSettings, RunConfig, Runner
+    from agents import (
+        Agent,
+        CodeInterpreterTool,
+        FileSearchTool,
+        HostedMCPTool,
+        ImageGenerationTool,
+        ModelSettings,
+        RunConfig,
+        Runner,
+        WebSearchTool,
+    )
     from agents.models.openai_provider import OpenAIProvider
     from agents.sandbox import SandboxAgent
+    from agents.tool import CodeInterpreter, ImageGeneration, Mcp
 
     provider = resolve_runtime_provider(version.model)
     model_settings, removed_model_settings = _model_settings_for_provider(
@@ -172,6 +183,21 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
         version.model,
         provider.capabilities,
         ModelSettings,
+    )
+    sdk_tools, enabled_sdk_tools, filtered_tools = _sdk_tools_for_provider(
+        version.tools,
+        version.mcp_servers,
+        provider.capabilities,
+        {
+            "WebSearchTool": WebSearchTool,
+            "FileSearchTool": FileSearchTool,
+            "CodeInterpreterTool": CodeInterpreterTool,
+            "CodeInterpreter": CodeInterpreter,
+            "HostedMCPTool": HostedMCPTool,
+            "Mcp": Mcp,
+            "ImageGenerationTool": ImageGenerationTool,
+            "ImageGeneration": ImageGeneration,
+        },
     )
     sandbox_plan = sandbox_plan_from_environment(environment_config)
     agent_class = SandboxAgent if sandbox_plan.enabled and sandbox_plan.sdk_supported else Agent
@@ -183,6 +209,7 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
         instructions=version.system or "You are a helpful managed agent.",
         model=provider.model_id,
         model_settings=model_settings,
+        tools=sdk_tools,
         **agent_kwargs,
     )
     sdk_input = _history_to_openai_input(history)
@@ -233,6 +260,8 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
                 "unsupported_parameters": list(provider.capabilities.unsupported_parameters),
             },
             "filtered_model_settings": removed_model_settings,
+            "enabled_sdk_tools": enabled_sdk_tools,
+            "filtered_tools": filtered_tools,
             "sdk_state": _safe_state(result),
         },
         sandbox_state=sandbox_plan.summary,
@@ -302,6 +331,191 @@ def _model_settings_for_provider(
         if key not in filtered
     }
     return model_settings_cls(**filtered), removed
+
+
+def _sdk_tools_for_provider(
+    tools: list[dict[str, Any]] | None,
+    mcp_servers: list[dict[str, Any]] | None,
+    capabilities,
+    sdk_classes: dict[str, Any],
+) -> tuple[list[Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    specs = _tool_specs(tools, mcp_servers)
+    if not specs:
+        return [], [], []
+
+    sdk_tools: list[Any] = []
+    enabled: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
+
+    for index, spec in enumerate(specs):
+        tool_type = _normalized_tool_type(spec)
+        summary = _tool_summary(spec, index=index, tool_type=tool_type)
+        if tool_type is None:
+            filtered.append({**summary, "reason": "missing_tool_type"})
+            continue
+        if not capabilities.hosted_tools and _is_hosted_tool_type(tool_type):
+            filtered.append({**summary, "reason": "provider_does_not_support_hosted_tools"})
+            continue
+
+        mapped = _map_hosted_tool(tool_type, spec, sdk_classes)
+        if mapped is None:
+            filtered.append({**summary, "reason": "unsupported_tool_type"})
+            continue
+        if isinstance(mapped, str):
+            filtered.append({**summary, "reason": mapped})
+            continue
+        sdk_tools.append(mapped)
+        enabled.append(summary)
+
+    return sdk_tools, enabled, filtered
+
+
+def _tool_specs(
+    tools: list[dict[str, Any]] | None,
+    mcp_servers: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for tool in tools or []:
+        if isinstance(tool, dict):
+            specs.append(dict(tool))
+    for server in mcp_servers or []:
+        if isinstance(server, dict):
+            specs.append({"type": "mcp", **server})
+    return specs
+
+
+def _normalized_tool_type(spec: dict[str, Any]) -> str | None:
+    raw = spec.get("type") or spec.get("tool_type") or spec.get("name")
+    if raw is None:
+        return None
+    return str(raw).strip().lower().replace("-", "_")
+
+
+def _is_hosted_tool_type(tool_type: str) -> bool:
+    return tool_type in {
+        "web_search",
+        "web_search_preview",
+        "file_search",
+        "code_interpreter",
+        "hosted_mcp",
+        "mcp",
+        "image_generation",
+    }
+
+
+def _map_hosted_tool(tool_type: str, spec: dict[str, Any], sdk_classes: dict[str, Any]) -> Any | str | None:
+    if tool_type in {"web_search", "web_search_preview"}:
+        kwargs: dict[str, Any] = {}
+        context_size = spec.get("search_context_size") or spec.get("context_size")
+        if context_size in {"low", "medium", "high"}:
+            kwargs["search_context_size"] = context_size
+        if isinstance(spec.get("user_location"), dict):
+            kwargs["user_location"] = spec["user_location"]
+        if isinstance(spec.get("filters"), dict):
+            kwargs["filters"] = spec["filters"]
+        if "external_web_access" in spec:
+            kwargs["external_web_access"] = bool(spec["external_web_access"])
+        return sdk_classes["WebSearchTool"](**kwargs)
+
+    if tool_type == "file_search":
+        vector_store_ids = spec.get("vector_store_ids") or spec.get("vector_store_id")
+        if isinstance(vector_store_ids, str):
+            vector_store_ids = [vector_store_ids]
+        if not isinstance(vector_store_ids, list) or not vector_store_ids:
+            return "missing_vector_store_ids"
+        kwargs = {
+            "vector_store_ids": [str(item) for item in vector_store_ids],
+        }
+        if spec.get("max_num_results") is not None:
+            kwargs["max_num_results"] = int(spec["max_num_results"])
+        if "include_search_results" in spec:
+            kwargs["include_search_results"] = bool(spec["include_search_results"])
+        if isinstance(spec.get("ranking_options"), dict):
+            kwargs["ranking_options"] = spec["ranking_options"]
+        if isinstance(spec.get("filters"), dict):
+            kwargs["filters"] = spec["filters"]
+        return sdk_classes["FileSearchTool"](**kwargs)
+
+    if tool_type == "code_interpreter":
+        config = sdk_classes["CodeInterpreter"](
+            type="code_interpreter",
+            container=spec.get("container") or {"type": "auto"},
+        )
+        return sdk_classes["CodeInterpreterTool"](config)
+
+    if tool_type in {"hosted_mcp", "mcp"}:
+        config = _mcp_tool_config(spec, sdk_classes["Mcp"])
+        if isinstance(config, str):
+            return config
+        return sdk_classes["HostedMCPTool"](config)
+
+    if tool_type == "image_generation":
+        config = {"type": "image_generation"}
+        for key in (
+            "model",
+            "quality",
+            "size",
+            "output_format",
+            "output_compression",
+            "background",
+            "moderation",
+            "partial_images",
+            "input_fidelity",
+            "action",
+        ):
+            if key in spec:
+                config[key] = spec[key]
+        return sdk_classes["ImageGenerationTool"](sdk_classes["ImageGeneration"](**config))
+
+    return None
+
+
+def _mcp_tool_config(spec: dict[str, Any], mcp_cls) -> Any | str:
+    server_label = (
+        spec.get("server_label")
+        or spec.get("label")
+        or spec.get("name")
+        or spec.get("id")
+    )
+    if not server_label:
+        return "missing_server_label"
+
+    config: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": str(server_label),
+    }
+    for key in (
+        "server_url",
+        "connector_id",
+        "authorization",
+        "headers",
+        "allowed_tools",
+        "require_approval",
+        "server_description",
+        "defer_loading",
+        "tunnel_id",
+    ):
+        value = spec.get(key)
+        if value is not None:
+            config[key] = value
+    if "server_url" not in config and spec.get("url"):
+        config["server_url"] = spec["url"]
+    if "server_url" not in config and "connector_id" not in config:
+        return "missing_server_url_or_connector_id"
+    return mcp_cls(**config)
+
+
+def _tool_summary(spec: dict[str, Any], *, index: int, tool_type: str | None) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "index": index,
+        "type": tool_type or "unknown",
+    }
+    label = spec.get("server_label") or spec.get("label") or spec.get("name") or spec.get("id")
+    if label:
+        summary["label"] = str(label)
+    if spec.get("connector_id"):
+        summary["connector_id"] = str(spec["connector_id"])
+    return summary
 
 
 def _latest_user_text(history) -> str:

@@ -1,0 +1,31 @@
+app = "open-managed-agents"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "scripts/migrate.sh"
+
+[env]
+  APP_ENV = "production"
+  OMA_RUNTIME_BACKEND = "auto"
+  OMA_STORAGE_BACKEND = "s3"
+  RUN_MIGRATIONS = "false"
+  WEB_CONCURRENCY = "1"
+
+[processes]
+  web = "scripts/start-web.sh"
+  worker = "scripts/start-worker.sh"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["web"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

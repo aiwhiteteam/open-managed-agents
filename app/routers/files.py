@@ -17,9 +17,11 @@ from app.storage import (
     delete_file as delete_stored_file,
     download_file_with_type,
     get_file_info,
+    is_object_storage_backend,
     object_key,
+    object_storage_backend_label,
     public_url_for_key,
-    should_store_in_r2,
+    should_store_in_object_storage,
 )
 
 router = APIRouter(
@@ -60,7 +62,7 @@ async def upload_file(
     storage_fields = {}
     db_content = content
     try:
-        if should_store_in_r2():
+        if should_store_in_object_storage():
             from app.storage import save_file_bytes
 
             stored = await save_file_bytes(
@@ -104,8 +106,8 @@ async def upload_file(
 @router.post("/presign")
 async def presign_file_upload(body: PresignFileBody):
     try:
-        if not should_store_in_r2():
-            raise HTTPException(status_code=503, detail="R2 storage is not configured")
+        if not should_store_in_object_storage():
+            raise HTTPException(status_code=503, detail="Object storage is not configured")
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     key = object_key(
@@ -131,8 +133,8 @@ async def presign_file_upload(body: PresignFileBody):
 @router.post("/complete", status_code=201)
 async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depends(get_session)):
     try:
-        if not should_store_in_r2():
-            raise HTTPException(status_code=503, detail="R2 storage is not configured")
+        if not should_store_in_object_storage():
+            raise HTTPException(status_code=503, detail="Object storage is not configured")
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     if not body.key.startswith("oma/staged-uploads/") and "/staged-uploads/" not in body.key:
@@ -165,7 +167,7 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
             "mime_type": mime_type,
             "scope": "managed_agents",
         },
-        storage_backend="r2",
+        storage_backend=object_storage_backend_label(),
         storage_key=permanent_key,
         storage_url=public_url_for_key(permanent_key),
         size_bytes=int(size_bytes) if size_bytes is not None else None,
@@ -196,7 +198,7 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=404, detail="File not found")
     content = file.content
     content_type = file.content_type or "application/octet-stream"
-    if content is None and file.storage_backend == "r2" and file.storage_key:
+    if content is None and is_object_storage_backend(file.storage_backend) and file.storage_key:
         content, stored_content_type = await download_file_with_type(file.storage_key)
         content_type = stored_content_type or content_type
     return Response(
@@ -211,7 +213,7 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_session)):
     file = await res_q.get_resource(db, resource_id=file_id, resource_type="file")
     if file is None:
         raise HTTPException(status_code=404, detail="File not found")
-    if file.storage_backend == "r2" and file.storage_key:
+    if is_object_storage_backend(file.storage_backend) and file.storage_key:
         await delete_stored_file(file.storage_key)
     await res_q.delete_resource(db, file)
     await db.commit()

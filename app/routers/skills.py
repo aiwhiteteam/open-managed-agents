@@ -14,7 +14,12 @@ from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import ListResponse
 from app.models.resources import deleted_response, resource_to_response
-from app.storage import StorageConfigurationError, download_file_with_type, should_store_in_r2
+from app.storage import (
+    StorageConfigurationError,
+    download_file_with_type,
+    is_object_storage_backend,
+    should_store_in_object_storage,
+)
 
 router = APIRouter(
     prefix="/v1/skills",
@@ -146,7 +151,7 @@ async def download_skill_version(skill_id: str, version: int, db: AsyncSession =
         raise HTTPException(status_code=404, detail="Skill version not found")
     content = skill_version.content
     content_type = skill_version.content_type or "application/zip"
-    if content is None and skill_version.storage_backend == "r2" and skill_version.storage_key:
+    if content is None and is_object_storage_backend(skill_version.storage_backend) and skill_version.storage_key:
         content, stored_content_type = await download_file_with_type(skill_version.storage_key)
         content_type = stored_content_type or content_type
     return Response(
@@ -168,7 +173,7 @@ async def _create_skill_version_resource(
     storage_fields = {}
     db_content = content
     try:
-        if should_store_in_r2():
+        if should_store_in_object_storage():
             from app.storage import save_file_bytes
 
             stored = await save_file_bytes(

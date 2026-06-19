@@ -1,7 +1,9 @@
-"""Cloudflare R2 object storage.
+"""S3-compatible object storage.
 
-Relational state lives in Postgres/SQLite. Object bytes live in R2 when
-configured, with DB blob storage kept only as the local development fallback.
+Relational state lives in Postgres/SQLite. Object bytes live in S3-compatible
+storage when configured, with DB blob storage kept only as the local
+development fallback. Cloudflare R2 is supported through the same S3 path, with
+legacy R2_* settings kept as aliases.
 """
 
 from __future__ import annotations
@@ -35,9 +37,82 @@ class StorageConfigurationError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class ObjectStorageSettings:
+    backend: str
+    bucket_name: str
+    public_url: str
+    access_key_id: str
+    secret_access_key: str
+    endpoint_url: str | None
+    region: str
+
+
+OBJECT_STORAGE_BACKENDS = {"s3", "r2", "object_storage"}
+
+
+def object_storage_configured() -> bool:
+    return _object_storage_settings() is not None
+
+
+def object_storage_backend_label() -> str:
+    return _require_object_storage().backend
+
+
+def is_object_storage_backend(value: str | None) -> bool:
+    return bool(value and value.lower() in OBJECT_STORAGE_BACKENDS)
+
+
+def should_store_in_object_storage() -> bool:
+    backend = get_settings().oma_storage_backend.lower()
+    if backend in OBJECT_STORAGE_BACKENDS:
+        if not object_storage_configured():
+            raise StorageConfigurationError(
+                f"OMA_STORAGE_BACKEND={backend} requires S3_* settings or legacy R2_* aliases"
+            )
+        return True
+    if backend == "auto":
+        return object_storage_configured()
+    if backend == "database":
+        return False
+    raise StorageConfigurationError("OMA_STORAGE_BACKEND must be one of: database, auto, s3, r2")
+
+
 def r2_configured() -> bool:
+    """Backward-compatible alias for older call sites."""
+    return object_storage_configured()
+
+
+def should_store_in_r2() -> bool:
+    """Backward-compatible alias for older call sites."""
+    return should_store_in_object_storage()
+
+
+def public_url_for_key(key: str) -> str:
+    base = _require_object_storage().public_url.rstrip("/")
+    return f"{base}/{key}"
+
+
+def key_from_public_url(url: str) -> str:
+    base = f"{_require_object_storage().public_url.rstrip('/')}/"
+    return url[len(base) :] if url.startswith(base) else url
+
+
+def _object_storage_settings() -> ObjectStorageSettings | None:
     s = get_settings()
-    return all(
+
+    if all([s.s3_access_key_id, s.s3_secret_access_key, s.s3_bucket_name, s.s3_public_url]):
+        return ObjectStorageSettings(
+            backend="s3",
+            bucket_name=s.s3_bucket_name,
+            public_url=s.s3_public_url,
+            access_key_id=s.s3_access_key_id,
+            secret_access_key=s.s3_secret_access_key,
+            endpoint_url=s.s3_endpoint_url or None,
+            region=s.s3_region or "auto",
+        )
+
+    if all(
         [
             s.r2_account_id,
             s.r2_access_key_id,
@@ -45,28 +120,25 @@ def r2_configured() -> bool:
             s.r2_files_bucket_name,
             s.r2_files_url,
         ]
-    )
+    ):
+        return ObjectStorageSettings(
+            backend="r2",
+            bucket_name=s.r2_files_bucket_name,
+            public_url=s.r2_files_url,
+            access_key_id=s.r2_access_key_id,
+            secret_access_key=s.r2_secret_access_key,
+            endpoint_url=f"https://{s.r2_account_id}.r2.cloudflarestorage.com",
+            region="auto",
+        )
+
+    return None
 
 
-def should_store_in_r2() -> bool:
-    backend = get_settings().oma_storage_backend.lower()
-    if backend == "r2":
-        if not r2_configured():
-            raise StorageConfigurationError("OMA_STORAGE_BACKEND=r2 requires all R2_* settings")
-        return True
-    if backend == "auto":
-        return r2_configured()
-    return False
-
-
-def public_url_for_key(key: str) -> str:
-    base = get_settings().r2_files_url.rstrip("/")
-    return f"{base}/{key}"
-
-
-def key_from_public_url(url: str) -> str:
-    base = f"{get_settings().r2_files_url.rstrip('/')}/"
-    return url[len(base) :] if url.startswith(base) else url
+def _require_object_storage() -> ObjectStorageSettings:
+    config = _object_storage_settings()
+    if config is None:
+        raise StorageConfigurationError("S3-compatible object storage is not fully configured")
+    return config
 
 
 def object_key(
@@ -92,9 +164,8 @@ async def save_file_bytes(
     filename: str,
     category: str = "general",
 ) -> StoredObject:
-    """Upload bytes to R2 and return object metadata."""
-    if not r2_configured():
-        raise StorageConfigurationError("R2 is not fully configured")
+    """Upload bytes to object storage and return object metadata."""
+    config = _require_object_storage()
     content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     sha256 = hashlib.sha256(data).hexdigest()
     key = object_key(
@@ -103,16 +174,15 @@ async def save_file_bytes(
         filename=filename,
         content_sha256=sha256,
     )
-    s = get_settings()
     async with _get_session().client(**_client_kwargs()) as client:
         await client.put_object(
-            Bucket=s.r2_files_bucket_name,
+            Bucket=config.bucket_name,
             Key=key,
             Body=data,
             ContentType=content_type,
         )
     return StoredObject(
-        backend="r2",
+        backend=config.backend,
         key=key,
         url=public_url_for_key(key),
         content_type=content_type,
@@ -127,9 +197,9 @@ async def download_file(key: str) -> bytes:
 
 
 async def download_file_with_type(key: str) -> tuple[bytes, str | None]:
-    s = get_settings()
+    config = _require_object_storage()
     async with _get_session().client(**_client_kwargs()) as client:
-        resp = await client.get_object(Bucket=s.r2_files_bucket_name, Key=key)
+        resp = await client.get_object(Bucket=config.bucket_name, Key=key)
         data = await resp["Body"].read()
         return data, resp.get("ContentType")
 
@@ -140,12 +210,12 @@ async def create_presigned_upload_url(
     *,
     expires_in: int = 900,
 ) -> str:
-    s = get_settings()
+    config = _require_object_storage()
     async with _get_session().client(**_client_kwargs()) as client:
         return await client.generate_presigned_url(
             "put_object",
             Params={
-                "Bucket": s.r2_files_bucket_name,
+                "Bucket": config.bucket_name,
                 "Key": key,
                 "ContentType": mime_type,
             },
@@ -155,9 +225,9 @@ async def create_presigned_upload_url(
 
 
 async def get_file_info(key: str) -> dict[str, Any]:
-    s = get_settings()
+    config = _require_object_storage()
     async with _get_session().client(**_client_kwargs()) as client:
-        return await client.head_object(Bucket=s.r2_files_bucket_name, Key=key)
+        return await client.head_object(Bucket=config.bucket_name, Key=key)
 
 
 async def copy_file(
@@ -166,11 +236,11 @@ async def copy_file(
     *,
     content_type: str | None = None,
 ) -> None:
-    s = get_settings()
+    config = _require_object_storage()
     params: dict[str, Any] = {
-        "Bucket": s.r2_files_bucket_name,
+        "Bucket": config.bucket_name,
         "Key": destination_key,
-        "CopySource": {"Bucket": s.r2_files_bucket_name, "Key": source_key},
+        "CopySource": {"Bucket": config.bucket_name, "Key": source_key},
     }
     if content_type:
         params["ContentType"] = content_type
@@ -180,9 +250,9 @@ async def copy_file(
 
 
 async def delete_file(key: str) -> None:
-    s = get_settings()
+    config = _require_object_storage()
     async with _get_session().client(**_client_kwargs()) as client:
-        await client.delete_object(Bucket=s.r2_files_bucket_name, Key=key)
+        await client.delete_object(Bucket=config.bucket_name, Key=key)
 
 
 def _get_session() -> Any:
@@ -195,14 +265,16 @@ def _get_session() -> Any:
 
 
 def _client_kwargs() -> dict[str, str]:
-    s = get_settings()
-    return {
+    config = _require_object_storage()
+    kwargs = {
         "service_name": "s3",
-        "endpoint_url": f"https://{s.r2_account_id}.r2.cloudflarestorage.com",
-        "aws_access_key_id": s.r2_access_key_id,
-        "aws_secret_access_key": s.r2_secret_access_key,
-        "region_name": "auto",
+        "aws_access_key_id": config.access_key_id,
+        "aws_secret_access_key": config.secret_access_key,
+        "region_name": config.region,
     }
+    if config.endpoint_url:
+        kwargs["endpoint_url"] = config.endpoint_url
+    return kwargs
 
 
 def _safe_filename(value: str | None) -> str:

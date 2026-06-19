@@ -19,10 +19,10 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | OpenAI Agents SDK runtime | Partial | Uses SDK when configured; deterministic local backend otherwise. OpenAI-compatible provider registry supports OpenAI, DeepSeek, MiniMax, custom providers, and capability maps. |
 | SandboxAgent mapping | Partial | Environment sandbox config maps to OpenAI Agents SDK `SandboxAgent` + `RunConfig.sandbox` for `unix_local`. Production cloud/self-hosted sandbox lifecycle is TODO. |
 | Exact Anthropic Python SDK contract tests | Planned | Requires extracting generated SDK types and route shapes. |
-| Skills API | Partial | Create/list/retrieve/delete plus versions and zip content download. R2 object storage is supported. Uploads require one top-level directory and `SKILL.md` frontmatter with `name` and `description`; exact Claude archive contract tests are TODO. |
-| Files API | Partial | Upload/list/retrieve/download/delete with R2 object storage when configured and DB blob fallback for local development. |
+| Skills API | Partial | Create/list/retrieve/delete plus versions and zip content download. S3-compatible object storage is supported, with R2 aliases retained. Uploads require one top-level directory and `SKILL.md` frontmatter with `name` and `description`; exact Claude archive contract tests are TODO. |
+| Files API | Partial | Upload/list/retrieve/download/delete with S3-compatible object storage when configured and DB blob fallback for local development. |
 | Vaults and credentials | Partial | Metadata CRUD only. Secure secret storage and OAuth flows are TODO. |
 | Memory stores | Partial | Postgres-backed path memories with unique path, optimistic version checks, version history with actor attribution, and redaction. Typed SDK schema parity and runtime memory tools are TODO. |
 | Deployments and runs | Partial | Metadata CRUD, cron/timezone validation, pause/unpause, manual run, and deployment-run session linkage. Real scheduler/retry worker semantics are TODO. |
 | User profiles | Partial | Metadata CRUD and placeholder enrollment URL. Identity/trust semantics are TODO. |
-| Self-hosted environment work | Partial | Postgres-backed work items, poll lease, ack, heartbeat, stop, and stats are implemented. Worker auth, retry backoff, and external worker deployment are TODO. |
+| Self-hosted environment work | Partial | Postgres-backed work items, poll lease, ack, heartbeat, stop, stats, and `oma-worker` are implemented. Worker auth, retry backoff, and external worker deployment are TODO. |

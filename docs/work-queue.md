@@ -13,3 +13,11 @@ Session execution now writes a durable `environment_work` resource before execut
 - `POST /work/{work_id}/stop` marks it stopped.
 
 This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with fencing locks and retry backoff.
+
+## Worker Command
+
+```bash
+oma-worker --poll-interval 1
+```
+
+Use `--environment-id env_...` to constrain the worker to one environment, or `--once` for one-shot execution in tests and maintenance jobs.

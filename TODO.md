@@ -11,7 +11,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 ## Runtime Semantics
 
-- Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub/worker deployment and fencing locks.
+- Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub deployment and fencing locks.
 - Implement true resumable OpenAI Agents SDK `RunState` persistence.
 - Map OpenAI Agents SDK streaming events into the full Claude Managed Agents event union.
 - Add integration tests with mocked OpenAI-compatible endpoints for DeepSeek, MiniMax, and at least one custom provider.
@@ -33,8 +33,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 ## Files And Resources
 
-- Add content deduplication, malware/content scanning, and R2 lifecycle policies.
-- Add a migration command to move legacy DB-backed local blobs into R2.
+- Add content deduplication, malware/content scanning, and object storage lifecycle policies.
 - Implement exact session resource union types for file, GitHub repository, and future resource kinds.
 
 ## Vaults
@@ -42,7 +41,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 - Store credentials in KMS/Vault instead of the generic resource table.
 - Implement OAuth enrollment and validation flows.
 - Implement credential refresh and webhook events.
-- Add secret redaction in responses and logs.
+- Add secret redaction in logs.
 
 ## Memory Stores
 

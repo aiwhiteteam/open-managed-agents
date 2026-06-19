@@ -10,7 +10,7 @@ class GenericBody(FlexibleApiModel):
 
 
 def resource_to_response(resource: ManagedResource, *, public_type: str | None = None) -> dict[str, Any]:
-    data = dict(resource.data or {})
+    data = _redacted_resource_data(resource)
     data.update(
         {
             "id": resource.id,
@@ -62,3 +62,32 @@ def encode_content(content: bytes | None) -> str | None:
     if content is None:
         return None
     return base64.b64encode(content).decode("ascii")
+
+
+SECRET_KEY_PARTS = ("secret", "token", "api_key", "apikey", "password", "private_key", "client_secret")
+
+
+def _redacted_resource_data(resource: ManagedResource) -> dict[str, Any]:
+    data = dict(resource.data or {})
+    if resource.resource_type in {"credential", "vault", "user_profile"}:
+        return _redact_secret_values(data)
+    return data
+
+
+def _redact_secret_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, child in value.items():
+            if _looks_secret_key(key):
+                redacted[key] = "redacted"
+            else:
+                redacted[key] = _redact_secret_values(child)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_secret_values(item) for item in value]
+    return value
+
+
+def _looks_secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(part in normalized for part in SECRET_KEY_PARTS)

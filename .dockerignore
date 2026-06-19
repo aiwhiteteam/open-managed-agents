@@ -1,8 +1,8 @@
 .env
+.git
 .venv
 .pytest_cache
 __pycache__
 *.pyc
 open_managed_agents.db
 tests
-

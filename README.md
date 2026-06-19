@@ -4,7 +4,7 @@ An MVP compatibility layer for a Claude Managed Agents-shaped API backed by the 
 
 The first version is intentionally small:
 
-- FastAPI service deployable to Google Cloud Run.
+- FastAPI service deployable as a portable Docker container on Cloud Run, Render, Railway, Fly.io, or AWS ECS/Fargate.
 - SQLAlchemy async persistence for agents, environments, sessions, and append-only events.
 - CMA-shaped `/v1/agents`, `/v1/environments`, `/v1/sessions`, and session event APIs.
 - SSE replay/stream endpoint.
@@ -62,15 +62,40 @@ See [docs/sandbox-runtime.md](./docs/sandbox-runtime.md).
 
 Session execution is queued as Postgres-backed environment work before it runs. See [docs/work-queue.md](./docs/work-queue.md).
 
+Run a local worker for queued self-hosted work:
+
+```bash
+oma-worker --poll-interval 1
+```
+
+## Portable Runtime
+
+The application is platform-neutral. All deployment targets use the same Dockerfile and the same process commands:
+
+- Web: `scripts/start-web.sh`
+- Worker: `scripts/start-worker.sh`
+- Migration: `scripts/migrate.sh`
+
+The default container command starts only the web process. Run migrations as a release/pre-deploy step or one-shot job before traffic is shifted. Set `RUN_MIGRATIONS=true` only for single-instance development or explicit one-off migration runs.
+
 ## Storage
 
 This service follows the `votrix-backend` split:
 
-- Supabase is used only through `DATABASE_URL` as relational Postgres for agents, sessions, events, resource metadata, and version pointers.
+- Relational state uses `DATABASE_URL` and can point at Supabase Postgres or any compatible Postgres deployment.
 - Memory stores are relational data: memory paths, content, metadata, optimistic versions, and version history live in Postgres.
 - Supabase Storage is not used.
-- Cloudflare R2 stores object bytes: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
-- Local development can leave R2 empty with `OMA_STORAGE_BACKEND=database`; in staging/production use `OMA_STORAGE_BACKEND=r2` plus all `R2_*` settings.
+- S3-compatible object storage stores object bytes: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
+- Local development can leave object storage empty with `OMA_STORAGE_BACKEND=database`; in staging/production use `OMA_STORAGE_BACKEND=s3` plus `S3_*` settings.
+- Cloudflare R2 works through the same S3-compatible path. `R2_*` settings are kept as backward-compatible aliases, not the preferred deployment surface.
+- A DB-blob to object-storage migration command is only needed for early/local data that was created before object storage was configured. It is not part of the normal production write path.
+
+Legacy DB blobs can be inspected and migrated with:
+
+```bash
+oma-migrate-blobs --limit 100
+oma-migrate-blobs --execute --limit 100
+```
 
 ## Minimal Flow
 
@@ -139,13 +164,14 @@ The implemented Managed Agents-shaped route groups are:
 
 Several route groups are metadata-compatible skeletons rather than complete Claude-equivalent behavior. See [TODO.md](./TODO.md).
 
-## Cloud Run
+## Deployment Targets
 
-The service follows the same deployment shape as `votrix-backend`:
+The root `Dockerfile` is the source of truth for every platform. Provider-specific files live under `deploy/`:
 
-- `Dockerfile`
-- `entrypoint.sh`
-- `cloudbuild.yaml`
-- `service.staging.yaml`
+- `deploy/gcp`: Google Cloud Run and Cloud Build.
+- `deploy/render`: Render Blueprint with web, worker, managed Postgres, and pre-deploy migration.
+- `deploy/railway`: Railway web and worker config-as-code templates.
+- `deploy/fly`: Fly.io app config with web, worker, and release migration.
+- `deploy/aws`: AWS ECS/Fargate Terraform reference for web and worker services.
 
-Set `DATABASE_URL`, `OPENAI_API_KEY`, `OMA_API_KEYS`, `OMA_STORAGE_BACKEND=r2`, and all `R2_*` values as Cloud Run secrets or environment variables. `DATABASE_URL` should point at Supabase Postgres; object bytes should point at Cloudflare R2.
+Set `DATABASE_URL`, `OPENAI_API_KEY`, `OMA_API_KEYS`, `OMA_STORAGE_BACKEND=s3`, and all `S3_*` values as platform secrets or environment variables. `DATABASE_URL` can point at Supabase Postgres, Render/Railway/Fly Postgres, Cloud SQL, RDS, or any compatible Postgres deployment. Object bytes should point at S3-compatible object storage.
