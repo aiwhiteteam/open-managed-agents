@@ -23,6 +23,6 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | Files API | Partial | Upload/list/retrieve/download/delete with R2 object storage when configured and DB blob fallback for local development. |
 | Vaults and credentials | Partial | Metadata CRUD only. Secure secret storage and OAuth flows are TODO. |
 | Memory stores | Partial | Postgres-backed path memories with unique path, optimistic version checks, version history with actor attribution, and redaction. Typed SDK schema parity and runtime memory tools are TODO. |
-| Deployments and runs | Partial | Metadata CRUD, pause/unpause/run placeholder. Scheduler semantics are TODO. |
+| Deployments and runs | Partial | Metadata CRUD, cron/timezone validation, pause/unpause, manual run, and deployment-run session linkage. Real scheduler/retry worker semantics are TODO. |
 | User profiles | Partial | Metadata CRUD and placeholder enrollment URL. Identity/trust semantics are TODO. |
 | Self-hosted environment work | Stub | Queue routes exist, real lease/worker behavior is TODO. |

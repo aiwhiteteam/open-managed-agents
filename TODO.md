@@ -54,7 +54,7 @@ This file tracks Claude Managed Agents compatibility gaps after the MVP API pass
 
 ## Deployments
 
-- Implement schedules, cron/timezone handling, run creation, retries, pause/unpause semantics, and deployment-run sessions.
+- Implement real scheduler execution, retries, and lease-safe deployment-run workers.
 - Emit deployment and session webhook events.
 
 ## User Profiles
