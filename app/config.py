@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     oma_default_workspace_id: str = "wrkspc_default"
     oma_api_key_workspaces: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     oma_event_poll_interval_seconds: float = 0.5
-    oma_storage_backend: str = "database"
+    oma_storage_backend: str = "s3"
     oma_max_file_upload_bytes: int = 50 * 1024 * 1024
     oma_max_skill_archive_bytes: int = 25 * 1024 * 1024
     oma_openai_compatible_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)

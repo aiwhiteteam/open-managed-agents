@@ -14,6 +14,18 @@ from app.storage import (
 )
 
 
+def _clear_s3_env(monkeypatch):
+    for key in (
+        "S3_ENDPOINT_URL",
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "S3_BUCKET_NAME",
+        "S3_PUBLIC_URL",
+        "S3_REGION",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_s3_object_storage_configuration(monkeypatch):
     monkeypatch.setenv("OMA_STORAGE_BACKEND", "s3")
     monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.example.com")
@@ -39,6 +51,7 @@ def test_s3_object_storage_configuration(monkeypatch):
 
 
 def test_r2_legacy_alias_configuration(monkeypatch):
+    _clear_s3_env(monkeypatch)
     monkeypatch.setenv("OMA_STORAGE_BACKEND", "r2")
     monkeypatch.setenv("R2_ACCOUNT_ID", "account-id")
     monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
@@ -54,15 +67,16 @@ def test_r2_legacy_alias_configuration(monkeypatch):
     assert is_object_storage_backend("r2") is True
 
 
-def test_database_storage_backend_does_not_require_object_storage(monkeypatch):
+def test_database_storage_backend_is_not_supported(monkeypatch):
     monkeypatch.setenv("OMA_STORAGE_BACKEND", "database")
     get_settings.cache_clear()
 
-    assert object_storage_configured() is False
-    assert should_store_in_object_storage() is False
+    with pytest.raises(StorageConfigurationError):
+        should_store_in_object_storage()
 
 
 def test_forced_object_storage_requires_configuration(monkeypatch):
+    _clear_s3_env(monkeypatch)
     monkeypatch.setenv("OMA_STORAGE_BACKEND", "s3")
     get_settings.cache_clear()
 

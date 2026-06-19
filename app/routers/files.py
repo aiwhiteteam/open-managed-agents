@@ -21,6 +21,7 @@ from app.storage import (
     object_key,
     object_storage_backend_label,
     public_url_for_key,
+    save_file_bytes,
     should_store_in_object_storage,
 )
 
@@ -59,27 +60,15 @@ async def upload_file(
     )
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
-    storage_fields = {}
-    db_content = content
     try:
-        if should_store_in_object_storage():
-            from app.storage import save_file_bytes
-
-            stored = await save_file_bytes(
-                content,
-                mime_type,
-                namespace="oma",
-                filename=file.filename or "upload",
-                category="files",
-            )
-            storage_fields = {
-                "storage_backend": stored.backend,
-                "storage_key": stored.key,
-                "storage_url": stored.url,
-                "size_bytes": stored.size_bytes,
-                "sha256": stored.sha256,
-            }
-            db_content = None
+        should_store_in_object_storage()
+        stored = await save_file_bytes(
+            content,
+            mime_type,
+            namespace="oma",
+            filename=file.filename or "upload",
+            category="files",
+        )
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -88,16 +77,18 @@ async def upload_file(
         resource_type="file",
         name=file.filename,
         filename=file.filename,
-        content=db_content,
+        content=None,
         content_type=mime_type,
         data={
             "filename": file.filename,
             "mime_type": mime_type,
             "scope": "managed_agents",
         },
-        size_bytes=len(content),
-        sha256=sha256,
-        **storage_fields,
+        storage_backend=stored.backend,
+        storage_key=stored.key,
+        storage_url=stored.url,
+        size_bytes=stored.size_bytes,
+        sha256=stored.sha256 or sha256,
     )
     await db.commit()
     return resource_to_response(resource, public_type="file")
@@ -196,13 +187,12 @@ async def download_file(file_id: str, db: AsyncSession = Depends(get_session)):
     file = await res_q.get_resource(db, resource_id=file_id, resource_type="file")
     if file is None:
         raise HTTPException(status_code=404, detail="File not found")
-    content = file.content
-    content_type = file.content_type or "application/octet-stream"
-    if content is None and is_object_storage_backend(file.storage_backend) and file.storage_key:
-        content, stored_content_type = await download_file_with_type(file.storage_key)
-        content_type = stored_content_type or content_type
+    if not (is_object_storage_backend(file.storage_backend) and file.storage_key):
+        raise HTTPException(status_code=500, detail="File object is not stored in object storage")
+    content, stored_content_type = await download_file_with_type(file.storage_key)
+    content_type = stored_content_type or file.content_type or "application/octet-stream"
     return Response(
-        content=content or b"",
+        content=content,
         media_type=content_type,
         headers={"Content-Disposition": f'attachment; filename="{file.filename or file.id}"'},
     )

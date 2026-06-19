@@ -72,10 +72,10 @@ def should_store_in_object_storage() -> bool:
             )
         return True
     if backend == "auto":
-        return object_storage_configured()
-    if backend == "database":
-        return False
-    raise StorageConfigurationError("OMA_STORAGE_BACKEND must be one of: database, auto, s3, r2")
+        if object_storage_configured():
+            return True
+        raise StorageConfigurationError("OMA_STORAGE_BACKEND=auto requires S3-compatible object storage settings")
+    raise StorageConfigurationError("OMA_STORAGE_BACKEND must be one of: auto, s3, r2, object_storage")
 
 
 def r2_configured() -> bool:

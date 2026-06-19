@@ -18,6 +18,7 @@ from app.storage import (
     StorageConfigurationError,
     download_file_with_type,
     is_object_storage_backend,
+    save_file_bytes,
     should_store_in_object_storage,
 )
 
@@ -149,13 +150,12 @@ async def download_skill_version(skill_id: str, version: int, db: AsyncSession =
     )
     if skill_version is None:
         raise HTTPException(status_code=404, detail="Skill version not found")
-    content = skill_version.content
-    content_type = skill_version.content_type or "application/zip"
-    if content is None and is_object_storage_backend(skill_version.storage_backend) and skill_version.storage_key:
-        content, stored_content_type = await download_file_with_type(skill_version.storage_key)
-        content_type = stored_content_type or content_type
+    if not (is_object_storage_backend(skill_version.storage_backend) and skill_version.storage_key):
+        raise HTTPException(status_code=500, detail="Skill version object is not stored in object storage")
+    content, stored_content_type = await download_file_with_type(skill_version.storage_key)
+    content_type = stored_content_type or skill_version.content_type or "application/zip"
     return Response(
-        content=content or b"",
+        content=content,
         media_type=content_type,
         headers={"Content-Disposition": f'attachment; filename="{skill_version.filename or skill_version.id}.zip"'},
     )
@@ -170,27 +170,15 @@ async def _create_skill_version_resource(
 ):
     _enforce_skill_archive_size(content)
     sha256 = hashlib.sha256(content).hexdigest()
-    storage_fields = {}
-    db_content = content
     try:
-        if should_store_in_object_storage():
-            from app.storage import save_file_bytes
-
-            stored = await save_file_bytes(
-                content,
-                "application/zip",
-                namespace=f"skills/{skill_id}",
-                filename=f"skill-v{version_number}-{sha256}.zip",
-                category="versions",
-            )
-            storage_fields = {
-                "storage_backend": stored.backend,
-                "storage_key": stored.key,
-                "storage_url": stored.url,
-                "size_bytes": stored.size_bytes,
-                "sha256": stored.sha256,
-            }
-            db_content = None
+        should_store_in_object_storage()
+        stored = await save_file_bytes(
+            content,
+            "application/zip",
+            namespace=f"skills/{skill_id}",
+            filename=f"skill-v{version_number}-{sha256}.zip",
+            category="versions",
+        )
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -199,7 +187,7 @@ async def _create_skill_version_resource(
         resource_type="skill_version",
         parent_id=skill_id,
         version=version_number,
-        content=db_content,
+        content=None,
         content_type="application/zip",
         filename=f"skill-v{version_number}.zip",
         data={
@@ -211,9 +199,11 @@ async def _create_skill_version_resource(
             "top_level_directory": data.get("top_level_directory"),
             "manifest": data.get("manifest"),
         },
-        size_bytes=len(content),
-        sha256=sha256,
-        **storage_fields,
+        storage_backend=stored.backend,
+        storage_key=stored.key,
+        storage_url=stored.url,
+        size_bytes=stored.size_bytes,
+        sha256=stored.sha256 or sha256,
     )
 
 
