@@ -40,6 +40,7 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     assert deployment["schedule"]["cron"] == "0 9 * * *"
     assert deployment["schedule"]["timezone"] == "America/New_York"
     assert deployment["schedule"]["enabled"] is True
+    assert len(deployment["schedule"]["upcoming_runs_at"]) == 5
 
     response = await client.post(
         f"/v1/deployments/{deployment['id']}/run",
@@ -58,6 +59,19 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     assert session["metadata"]["deployment_id"] == deployment["id"]
     assert session["metadata"]["deployment_run_id"] == run["id"]
 
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}/run",
+        headers=TEST_HEADERS,
+        json={"trigger": "schedule", "scheduled_for": deployment["schedule"]["upcoming_runs_at"][0]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/deployments/{deployment['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    scheduled_deployment = response.json()
+    assert scheduled_deployment["schedule"]["last_run_at"] is not None
+    assert len(scheduled_deployment["schedule"]["upcoming_runs_at"]) == 5
+
 
 async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     response = await client.post(
@@ -67,6 +81,13 @@ async def test_deployment_rejects_bad_timezone_and_paused_run(client):
             "name": "Bad schedule",
             "schedule": {"type": "cron", "cron": "0 9 * * *", "timezone": "Mars/Base"},
         },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={"name": "Bad cron", "schedule": {"type": "cron", "cron": "99 9 * * *", "timezone": "UTC"}},
     )
     assert response.status_code == 422
 

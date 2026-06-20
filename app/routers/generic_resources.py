@@ -496,8 +496,15 @@ async def run_deployment(
     if deployment.status == "paused" or deployment.data.get("status") == "paused":
         raise HTTPException(status_code=409, detail="Deployment is paused")
     run_input = body.model_dump(mode="json") if body is not None else {}
-    deployment_data = deployment.data or {}
+    deployment_data = dict(deployment.data or {})
     attempt = int(run_input.get("attempt") or 1)
+    if (run_input.get("trigger") or run_input.get("trigger_type")) == "schedule":
+        schedule = dict(deployment_data.get("schedule") or {})
+        if schedule.get("expression") and schedule.get("timezone"):
+            schedule["last_run_at"] = utcnow().isoformat()
+            schedule["upcoming_runs_at"] = _upcoming_cron_runs(str(schedule["expression"]), str(schedule["timezone"]))
+            deployment_data["schedule"] = schedule
+            await res_q.update_resource(db, deployment, data=deployment_data)
     run = await res_q.create_resource(
         db,
         resource_type="deployment_run",
@@ -1195,13 +1202,77 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
             "cron": expression,
             "timezone": timezone,
             "enabled": bool(schedule.get("enabled", True)),
+            "upcoming_runs_at": _upcoming_cron_runs(expression, timezone),
         }
     return normalized
 
 
 def _valid_cron_expression(expression: str) -> bool:
     parts = expression.split()
-    return len(parts) == 5 and all(parts)
+    if len(parts) != 5 or not all(parts):
+        return False
+    try:
+        _cron_field_values(parts[0], minimum=0, maximum=59)
+        _cron_field_values(parts[1], minimum=0, maximum=23)
+        _cron_field_values(parts[2], minimum=1, maximum=31)
+        _cron_field_values(parts[3], minimum=1, maximum=12)
+        _cron_field_values(parts[4], minimum=0, maximum=7)
+    except ValueError:
+        return False
+    return True
+
+
+def _upcoming_cron_runs(expression: str, timezone: str, *, count: int = 5) -> list[str]:
+    parts = expression.split()
+    if len(parts) != 5:
+        return []
+    minutes = _cron_field_values(parts[0], minimum=0, maximum=59)
+    hours = _cron_field_values(parts[1], minimum=0, maximum=23)
+    days = _cron_field_values(parts[2], minimum=1, maximum=31)
+    months = _cron_field_values(parts[3], minimum=1, maximum=12)
+    weekdays = _cron_field_values(parts[4], minimum=0, maximum=7)
+    tz = ZoneInfo(timezone)
+    current = utcnow().astimezone(tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    matches: list[str] = []
+    for _ in range(366 * 24 * 60):
+        cron_weekday = (current.weekday() + 1) % 7
+        if (
+            current.minute in minutes
+            and current.hour in hours
+            and current.day in days
+            and current.month in months
+            and (cron_weekday in weekdays or (cron_weekday == 0 and 7 in weekdays))
+        ):
+            matches.append(current.astimezone(ZoneInfo("UTC")).isoformat())
+            if len(matches) >= count:
+                return matches
+        current += timedelta(minutes=1)
+    return matches
+
+
+def _cron_field_values(part: str, *, minimum: int, maximum: int) -> set[int]:
+    values: set[int] = set()
+    for item in part.split(","):
+        item = item.strip()
+        if not item:
+            raise ValueError("empty cron field item")
+        step = 1
+        if "/" in item:
+            item, raw_step = item.split("/", 1)
+            step = int(raw_step)
+            if step <= 0:
+                raise ValueError("cron step must be positive")
+        if item == "*":
+            start, end = minimum, maximum
+        elif "-" in item:
+            raw_start, raw_end = item.split("-", 1)
+            start, end = int(raw_start), int(raw_end)
+        else:
+            start = end = int(item)
+        if start < minimum or end > maximum or start > end:
+            raise ValueError("cron field value out of range")
+        values.update(range(start, end + 1, step))
+    return values
 
 
 def _normalize_deployment_run_data(data: dict[str, Any]) -> dict[str, Any]:

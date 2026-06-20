@@ -21,7 +21,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events.
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent.
 - Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
-- Implement deployment scheduler semantics: cron/timezone validation, upcoming runs, autonomous session creation, retries, and lease-safe workers.
+- Implement deployment scheduler semantics: autonomous scheduled session creation, retries, and lease-safe workers. Cron/timezone validation plus `upcoming_runs_at`/`last_run_at` bookkeeping have local coverage.
 - Implement sandbox/environment policy enforcement through provider interfaces: network allowlists, MCP/package-manager exceptions, resource limits, and production cloud sandbox backends.
 
 ## Design Invariants / Do Not Break
@@ -96,6 +96,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Deployments
 
+- Keep cron/timezone validation and schedule timestamp bookkeeping covered.
 - Implement real scheduler execution, retries, and lease-safe deployment-run workers.
 - Emit deployment and session webhook events.
 
