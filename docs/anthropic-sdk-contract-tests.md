@@ -40,7 +40,7 @@ Current passing coverage:
 - `client.beta.vaults.credentials.create/retrieve/update/list/archive/delete/mcp_oauth_validate`, including `mcp_oauth`, `static_bearer`, and `environment_variable` auth unions, refresh secret redaction, and environment-variable partial auth updates.
 - `client.beta.memory_stores.create/retrieve/update/list/archive/delete`.
 - `client.beta.memory_stores.memories.create/retrieve/update/list/delete`, including `depth` rollups as `memory_prefix` items.
-- `client.beta.memory_stores.memory_versions.retrieve/list/redact`, including `api_key_id`, `session_id`, and `view` list filters.
+- `client.beta.memory_stores.memory_versions.retrieve/list/redact`, including `api_key_id`, `session_id`, `operation`, and `view` list filters.
 - `client.beta.deployments.create/retrieve/update/list/archive/pause/unpause/run`.
 - `client.beta.deployment_runs.retrieve/list`.
 - `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`, including `external` and `resold` relationships.

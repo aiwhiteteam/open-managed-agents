@@ -39,6 +39,7 @@ MAX_MEMORY_CONTENT_BYTES = 100 * 1024
 MAX_MEMORY_PATH_BYTES = 1024
 DEPLOYMENT_RUN_TRIGGER_TYPES = {"manual", "schedule"}
 MEMORY_VIEWS = {"basic", "full"}
+MEMORY_VERSION_OPERATIONS = {"created", "deleted", "modified"}
 USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
 MAX_USER_PROFILE_FIELD_CHARS = 255
 MAX_DISPLAY_NAME_CHARS = 255
@@ -429,6 +430,8 @@ async def list_memory_versions(
     db: AsyncSession = Depends(get_session),
 ):
     view = _normalize_memory_view(view)
+    if operation is not None and operation not in MEMORY_VERSION_OPERATIONS:
+        raise HTTPException(status_code=422, detail="operation must be created, deleted, or modified")
     await _must_exist(db, memory_store_id, "memory_store")
     memories = await res_q.list_resources(
         db,

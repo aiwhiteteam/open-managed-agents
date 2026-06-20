@@ -314,6 +314,19 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     assert response.json()["operation"] == "deleted"
 
 
+async def test_memory_version_list_rejects_unknown_operation(client):
+    store = await _create_store(client)
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions",
+        headers=TEST_HEADERS,
+        params={"operation": "renamed"},
+    )
+
+    assert response.status_code == 422
+    assert "operation" in response.json()["error"]["message"]
+
+
 async def test_memory_version_list_filters_api_key_session_and_view(client):
     store = await _create_store(client)
     response = await client.post(

@@ -1009,6 +1009,18 @@ async def test_anthropic_sdk_memory_stores_contract():
         assert [item.operation for item in versions] == ["modified", "created"]
         assert versions[0].content == updated_content
 
+        modified_versions = [
+            item
+            async for item in client.beta.memory_stores.memory_versions.list(
+                store.id,
+                operation="modified",
+                view="full",
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert [item.id for item in modified_versions] == [versions[0].id]
+
         filter_memory = await client.beta.memory_stores.memories.create(
             store.id,
             path="/filters/sdk.md",
