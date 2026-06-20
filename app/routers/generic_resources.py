@@ -1417,6 +1417,10 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
 
     metadata = dict(run_input.get("metadata") or {})
     metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
+    vault_ids = await _validate_deployment_vault_ids(
+        db,
+        run_input.get("vault_ids") or data.get("vault_ids") or [],
+    )
     return await sessions_q.create_session(
         db,
         agent=agent,
@@ -1424,8 +1428,25 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
         environment=environment,
         title=run_input.get("title") or data.get("title") or data.get("name") or deployment.name,
         metadata=metadata,
-        vault_ids=run_input.get("vault_ids") or data.get("vault_ids") or [],
+        vault_ids=vault_ids,
     )
+
+
+async def _validate_deployment_vault_ids(db: AsyncSession, vault_ids: list[Any]) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw_id in vault_ids:
+        vault_id = str(raw_id or "")
+        if not vault_id:
+            raise HTTPException(status_code=422, detail="vault_ids must not contain empty values")
+        if vault_id in seen:
+            continue
+        vault = await res_q.get_resource(db, resource_id=vault_id, resource_type="vault")
+        if vault is None or vault.archived_at is not None:
+            raise HTTPException(status_code=404, detail=f"Vault not found: {vault_id}")
+        resolved.append(vault_id)
+        seen.add(vault_id)
+    return resolved
 
 
 def _deployment_agent_ref(value: Any) -> tuple[str, int | None]:

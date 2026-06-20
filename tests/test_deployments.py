@@ -73,6 +73,50 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     assert len(scheduled_deployment["schedule"]["upcoming_runs_at"]) == 5
 
 
+async def test_deployment_run_validates_session_vault_ids(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "Deployment Vault"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Vaulted deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "vault_ids": [vault["id"], vault["id"]],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    run = response.json()
+    response = await client.get(f"/v1/sessions/{run['session_id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["vault_ids"] == [vault["id"]]
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Missing vault deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "vault_ids": ["vault_missing"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    missing_vault_deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{missing_vault_deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 404
+
+
 async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     response = await client.post(
         "/v1/deployments",
