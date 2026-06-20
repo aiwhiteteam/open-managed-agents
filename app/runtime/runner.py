@@ -129,6 +129,7 @@ async def _run_session_turn(session_id: str) -> None:
             if session.status != SESSION_RUNNING or is_waiting_for_action(session.stop_reason):
                 return
             blocking_event_ids: list[str] = []
+            explicit_confirmation_events = any(event.get("requires_confirmation") for event in result.tool_events)
             for tool_event in result.tool_events:
                 event = await events_q.append_event(
                     db,
@@ -136,11 +137,11 @@ async def _run_session_turn(session_id: str) -> None:
                     event_type=tool_event["type"],
                     payload=tool_event,
                 )
-                if result.requires_action and tool_event["type"] in {
-                    "agent.custom_tool_use",
-                    "agent.tool_use",
-                    "agent.mcp_tool_use",
-                }:
+                if _is_required_action_event(
+                    result,
+                    tool_event,
+                    explicit_confirmation_events=explicit_confirmation_events,
+                ):
                     blocking_event_ids.append(event.id)
             if result.requires_action:
                 stop_reason = {"type": "requires_action", "event_ids": blocking_event_ids}
@@ -1359,6 +1360,21 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
             "source": "openai_agents_sdk",
         }
     return None
+
+
+def _is_required_action_event(
+    result: RuntimeResult,
+    event: dict[str, Any],
+    *,
+    explicit_confirmation_events: bool,
+) -> bool:
+    if not result.requires_action:
+        return False
+    if event["type"] not in {"agent.custom_tool_use", "agent.tool_use", "agent.mcp_tool_use"}:
+        return False
+    if explicit_confirmation_events:
+        return bool(event.get("requires_confirmation"))
+    return True
 
 
 def _raw_stream_item(item) -> Any:

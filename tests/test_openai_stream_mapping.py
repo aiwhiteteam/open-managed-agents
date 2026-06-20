@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.runtime.runner import _map_openai_stream_event
+from app.runtime.runner import RuntimeResult, _is_required_action_event, _map_openai_stream_event
 
 
 def _run_item_event(name: str, raw_item: dict, **item_attrs):
@@ -101,3 +101,33 @@ def test_openai_agent_update_maps_to_agent_event():
         "name": "Researcher",
         "source": "openai_agents_sdk",
     }
+
+
+def test_explicit_confirmation_only_blocks_marked_events():
+    result = RuntimeResult(
+        final_text="",
+        requires_action=True,
+        tool_events=[
+            {"type": "agent.tool_use", "name": "ordinary_tool"},
+            {"type": "agent.mcp_tool_use", "name": "mcp_tool", "requires_confirmation": True},
+        ],
+    )
+
+    ordinary, approval = result.tool_events
+
+    assert _is_required_action_event(result, ordinary, explicit_confirmation_events=True) is False
+    assert _is_required_action_event(result, approval, explicit_confirmation_events=True) is True
+
+
+def test_implicit_local_required_action_keeps_existing_blocking_behavior():
+    result = RuntimeResult(
+        final_text="",
+        requires_action=True,
+        tool_events=[{"type": "agent.custom_tool_use", "name": "lookup"}],
+    )
+
+    assert _is_required_action_event(
+        result,
+        result.tool_events[0],
+        explicit_confirmation_events=False,
+    ) is True
