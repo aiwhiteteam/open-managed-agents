@@ -198,6 +198,65 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(client, mo
     assert response.status_code == 404
 
 
+async def test_api_keys_scope_deployments_and_runs_to_workspaces(client, monkeypatch):
+    monkeypatch.setenv("OMA_API_KEYS", "key-a,key-b")
+    monkeypatch.setenv("OMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
+    get_settings.cache_clear()
+
+    headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
+    headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
+
+    response = await client.post(
+        "/v1/agents",
+        headers=headers_a,
+        json={"name": "Deployment Scope Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    response = await client.post(
+        "/v1/environments",
+        headers=headers_a,
+        json={"name": "deployment-scope-env", "config": {"type": "cloud"}},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=headers_a,
+        json={
+            "name": "Scoped Deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "scope check"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=headers_a)
+    assert response.status_code == 200, response.text
+    deployment_run = response.json()
+
+    response = await client.get("/v1/deployments", headers=headers_b)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+    response = await client.get(f"/v1/deployments/{deployment['id']}", headers=headers_b)
+    assert response.status_code == 404
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=headers_b)
+    assert response.status_code == 404
+
+    response = await client.get("/v1/deployment_runs", headers=headers_b)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+    response = await client.get(f"/v1/deployment_runs/{deployment_run['id']}", headers=headers_b)
+    assert response.status_code == 404
+
+
 async def test_create_app_accepts_hosted_auth_provider(monkeypatch):
     class HostedAuthProvider:
         async def authenticate(self, request, credentials):
