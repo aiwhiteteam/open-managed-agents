@@ -38,14 +38,14 @@ Status legend:
 | list | `GET /v1/environments` | implemented |
 | delete | `DELETE /v1/environments/{environment_id}` | implemented |
 | archive | `POST /v1/environments/{environment_id}/archive` | implemented |
-| work retrieve | `GET /v1/environments/{environment_id}/work/{work_id}` | stub |
-| work update | `POST /v1/environments/{environment_id}/work/{work_id}` | stub |
-| work list | `GET /v1/environments/{environment_id}/work` | stub |
-| work ack | `POST /v1/environments/{environment_id}/work/{work_id}/ack` | stub |
-| work heartbeat | `POST /v1/environments/{environment_id}/work/{work_id}/heartbeat` | stub |
-| work poll | `GET /v1/environments/{environment_id}/work/poll` | stub |
-| work stats | `GET /v1/environments/{environment_id}/work/stats` | stub |
-| work stop | `POST /v1/environments/{environment_id}/work/{work_id}/stop` | stub |
+| work retrieve | `GET /v1/environments/{environment_id}/work/{work_id}` | partial |
+| work update | `POST /v1/environments/{environment_id}/work/{work_id}` | partial |
+| work list | `GET /v1/environments/{environment_id}/work` | partial |
+| work ack | `POST /v1/environments/{environment_id}/work/{work_id}/ack` | partial |
+| work heartbeat | `POST /v1/environments/{environment_id}/work/{work_id}/heartbeat` | partial |
+| work poll | `GET /v1/environments/{environment_id}/work/poll` | partial |
+| work stats | `GET /v1/environments/{environment_id}/work/stats` | partial |
+| work stop | `POST /v1/environments/{environment_id}/work/{work_id}/stop` | partial |
 
 ## Sessions
 
