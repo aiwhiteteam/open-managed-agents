@@ -230,6 +230,35 @@ async def test_generic_resource_metadata_limits_are_enforced(client):
     assert response.status_code == 422
 
 
+async def test_vault_and_credential_display_name_validation(client):
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={})
+    assert response.status_code == 422
+    assert "display_name" in response.json()["error"]["message"]
+
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "x" * 256})
+    assert response.status_code == 422
+    assert "255" in response.json()["error"]["message"]
+
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "Name Validation"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "x" * 256,
+            "auth": {
+                "type": "static_bearer",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "token": "secret-token",
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert "255" in response.json()["error"]["message"]
+
+
 async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         "/v1/vaults",

@@ -41,6 +41,7 @@ DEPLOYMENT_RUN_TRIGGER_TYPES = {"manual", "schedule"}
 MEMORY_VIEWS = {"basic", "full"}
 USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
 MAX_USER_PROFILE_FIELD_CHARS = 255
+MAX_DISPLAY_NAME_CHARS = 255
 CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
 CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
 
@@ -1042,10 +1043,9 @@ def _resource_response(resource, *, view: str | None = None) -> dict[str, Any]:
 
 def _normalize_vault_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
-    display_name = normalized.get("display_name") or normalized.get("name")
-    if display_name is not None:
-        normalized["display_name"] = str(display_name)
-        normalized.setdefault("name", str(display_name))
+    display_name = _display_name_from_data(normalized, resource_name="vault", required=True)
+    normalized["display_name"] = display_name
+    normalized.setdefault("name", display_name)
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
 
@@ -1059,16 +1059,31 @@ def _vault_response(resource) -> dict[str, Any]:
 
 def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
-    display_name = normalized.get("display_name") or normalized.get("name")
+    display_name = _display_name_from_data(normalized, resource_name="credential", required=False)
     if display_name is not None:
-        normalized["display_name"] = str(display_name)
-        normalized.setdefault("name", str(display_name))
+        normalized["display_name"] = display_name
+        normalized.setdefault("name", display_name)
     if "auth" not in normalized:
         auth_type = str(normalized.pop("type", "mcp_oauth"))
         normalized["auth"] = _legacy_credential_auth(auth_type, normalized)
     normalized["auth"] = _normalize_credential_auth(normalized["auth"])
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
+
+
+def _display_name_from_data(data: dict[str, Any], *, resource_name: str, required: bool) -> str | None:
+    display_name = data.get("display_name") or data.get("name")
+    if display_name is None:
+        if required:
+            raise HTTPException(status_code=422, detail=f"{resource_name} display_name is required")
+        return None
+    if not isinstance(display_name, str):
+        raise HTTPException(status_code=422, detail=f"{resource_name} display_name must be a string")
+    if not display_name:
+        raise HTTPException(status_code=422, detail=f"{resource_name} display_name must not be empty")
+    if len(display_name) > MAX_DISPLAY_NAME_CHARS:
+        raise HTTPException(status_code=422, detail=f"{resource_name} display_name must be at most 255 characters")
+    return display_name
 
 
 def _merge_credential_auth(existing: Any, patch: dict[str, Any]) -> dict[str, Any]:
