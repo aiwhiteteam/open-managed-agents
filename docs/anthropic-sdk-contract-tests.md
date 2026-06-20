@@ -41,7 +41,7 @@ Current passing coverage:
 - `client.beta.memory_stores.create/retrieve/update/list/archive/delete`.
 - `client.beta.memory_stores.memories.create/retrieve/update/list/delete`, including `depth` rollups as `memory_prefix` items.
 - `client.beta.memory_stores.memory_versions.retrieve/list/redact`, including `api_key_id`, `session_id`, `operation`, and `view` list filters.
-- `client.beta.deployments.create/retrieve/update/list/archive/pause/unpause/run`, including deployment `system.message` initial-event ordering.
+- `client.beta.deployments.create/retrieve/update/list/archive/pause/unpause/run`, including deployment `system.message` initial-event ordering and local `resources`/`vault_ids` limit coverage.
 - `client.beta.deployment_runs.retrieve/list`.
 - `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`, including `external` and `resold` relationships.
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.

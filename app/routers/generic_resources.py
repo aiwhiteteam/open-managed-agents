@@ -45,6 +45,8 @@ USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
 MAX_USER_PROFILE_FIELD_CHARS = 255
 MAX_DISPLAY_NAME_CHARS = 255
 MAX_MEMORY_STORE_DESCRIPTION_CHARS = 1024
+MAX_DEPLOYMENT_RESOURCES = 500
+MAX_DEPLOYMENT_VAULT_IDS = 50
 CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
 CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
 
@@ -1801,8 +1803,8 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized["agent"] = _deployment_agent_reference_input(normalized.get("agent"))
     normalized.setdefault("environment_id", "")
     normalized.setdefault("initial_events", [])
-    normalized.setdefault("resources", [])
-    normalized.setdefault("vault_ids", [])
+    normalized["resources"] = _normalize_deployment_resources(normalized.get("resources"))
+    normalized["vault_ids"] = _normalize_deployment_vault_ids(normalized.get("vault_ids"))
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
 
     schedule = normalized.get("schedule")
@@ -1898,6 +1900,26 @@ def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
     validate_system_message_batch(event_types)
     if "user.message" not in event_types:
         raise HTTPException(status_code=422, detail="Deployment initial_events must include a user.message event")
+
+
+def _normalize_deployment_resources(resources: Any) -> list[Any]:
+    if resources is None:
+        return []
+    if not isinstance(resources, list):
+        raise HTTPException(status_code=422, detail="Deployment resources must be an array")
+    if len(resources) > MAX_DEPLOYMENT_RESOURCES:
+        raise HTTPException(status_code=422, detail="Deployment resources supports at most 500 resources")
+    return list(resources)
+
+
+def _normalize_deployment_vault_ids(vault_ids: Any) -> list[Any]:
+    if vault_ids is None:
+        return []
+    if not isinstance(vault_ids, list):
+        raise HTTPException(status_code=422, detail="Deployment vault_ids must be an array")
+    if len(vault_ids) > MAX_DEPLOYMENT_VAULT_IDS:
+        raise HTTPException(status_code=422, detail="Deployment vault_ids supports at most 50 vaults")
+    return list(vault_ids)
 
 
 def _valid_cron_expression(expression: str) -> bool:
@@ -2147,10 +2169,8 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
 
     metadata = dict(run_input.get("metadata") or {})
     metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
-    vault_ids = await _validate_deployment_vault_ids(
-        db,
-        run_input.get("vault_ids") or data.get("vault_ids") or [],
-    )
+    vault_input = run_input["vault_ids"] if "vault_ids" in run_input else data.get("vault_ids")
+    vault_ids = await _validate_deployment_vault_ids(db, vault_input)
     session = await sessions_q.create_session(
         db,
         agent=agent,
@@ -2160,7 +2180,8 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
         metadata=metadata,
         vault_ids=vault_ids,
     )
-    for resource_data in run_input.get("resources") or data.get("resources") or []:
+    resource_input = run_input["resources"] if "resources" in run_input else data.get("resources")
+    for resource_data in _normalize_deployment_resources(resource_input):
         await create_session_resource(
             db,
             session,
@@ -2175,7 +2196,8 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
     return session
 
 
-async def _validate_deployment_vault_ids(db: AsyncSession, vault_ids: list[Any]) -> list[str]:
+async def _validate_deployment_vault_ids(db: AsyncSession, vault_ids: Any) -> list[str]:
+    vault_ids = _normalize_deployment_vault_ids(vault_ids)
     resolved: list[str] = []
     seen: set[str] = set()
     for raw_id in vault_ids:

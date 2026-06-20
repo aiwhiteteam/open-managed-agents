@@ -371,6 +371,66 @@ async def test_deployment_initial_events_system_message_ordering_and_update_cont
         assert response.status_code == 422, response.text
 
 
+async def test_deployment_resource_and_vault_collection_limits(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    base_payload = {
+        "name": "Limited deployment",
+        "agent": {"id": agent["id"], "version": 1},
+        "environment_id": environment["id"],
+        "initial_events": [{"type": "user.message", "content": "run"}],
+    }
+
+    too_many_resources = [
+        {
+            "type": "github_repository",
+            "url": f"https://github.com/example/repo-{index}",
+            "mount_path": f"/workspace/repo-{index}",
+        }
+        for index in range(501)
+    ]
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={**base_payload, "resources": too_many_resources},
+    )
+    assert response.status_code == 422, response.text
+    assert "at most 500" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={**base_payload, "vault_ids": [f"vault_{index}" for index in range(51)]},
+    )
+    assert response.status_code == 422, response.text
+    assert "at most 50" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={**base_payload, "resources": "not-an-array"},
+    )
+    assert response.status_code == 422, response.text
+
+    response = await client.post("/v1/deployments", headers=TEST_HEADERS, json=base_payload)
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}",
+        headers=TEST_HEADERS,
+        json={"resources": too_many_resources},
+    )
+    assert response.status_code == 422, response.text
+
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}",
+        headers=TEST_HEADERS,
+        json={"vault_ids": [f"vault_{index}" for index in range(51)]},
+    )
+    assert response.status_code == 422, response.text
+
+
 async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)
