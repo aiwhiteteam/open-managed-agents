@@ -361,6 +361,45 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")
 
 
+async def test_session_file_resource_limit_is_enforced(client):
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("limit.txt", b"limit", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    file = response.json()
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    async with session_scope() as db:
+        for index in range(100):
+            await res_q.create_resource(
+                db,
+                resource_type="session_resource",
+                parent_id=session["id"],
+                name=file["id"],
+                data={
+                    "type": "file",
+                    "file_id": file["id"],
+                    "mount_path": f"/workspace/{index}.txt",
+                    "read_only": True,
+                },
+            )
+        await db.commit()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/resources",
+        headers=TEST_HEADERS,
+        json={"type": "file", "file_id": file["id"], "mount_path": "/workspace/overflow.txt"},
+    )
+
+    assert response.status_code == 422
+    assert "at most 100 file resources" in response.json()["error"]["message"]
+
+
 async def test_memory_store_session_resource_is_added_to_runtime_context(client):
     response = await client.post(
         "/v1/memory_stores",

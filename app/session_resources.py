@@ -11,6 +11,9 @@ from app.models.common import utcnow
 from app.models.resources import resource_to_response
 
 
+MAX_SESSION_FILE_RESOURCES = 100
+
+
 async def create_session_resource(
     db: AsyncSession,
     session,
@@ -18,6 +21,8 @@ async def create_session_resource(
     *,
     allowed_types: set[str],
 ):
+    if isinstance(data, dict) and data.get("type") == "file":
+        await _ensure_file_resource_capacity(db, session)
     normalized = await normalize_session_resource_data(
         db,
         data,
@@ -33,6 +38,19 @@ async def create_session_resource(
         data=normalized,
         workspace_id=session.workspace_id,
     )
+
+
+async def _ensure_file_resource_capacity(db: AsyncSession, session) -> None:
+    resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        limit=1000,
+        workspace_id=session.workspace_id,
+    )
+    file_count = sum(1 for resource in resources if (resource.data or {}).get("type") == "file")
+    if file_count >= MAX_SESSION_FILE_RESOURCES:
+        raise HTTPException(status_code=422, detail="A session can have at most 100 file resources")
 
 
 async def normalize_session_resource_data(
