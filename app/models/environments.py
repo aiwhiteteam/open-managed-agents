@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -12,6 +12,7 @@ class EnvironmentCreateRequest(ApiModel):
     description: str | None = None
     config: dict[str, Any] = Field(default_factory=lambda: {"type": "cloud"})
     metadata: dict[str, Any] = Field(default_factory=dict)
+    scope: Literal["organization", "account"] | None = None
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -24,6 +25,7 @@ class EnvironmentUpdateRequest(ApiModel):
     description: str | None = None
     config: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    scope: Literal["organization", "account"] | None = None
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -39,6 +41,7 @@ class EnvironmentResponse(ApiModel):
     description: str
     config: dict[str, Any]
     metadata: dict[str, Any] = Field(default_factory=dict)
+    scope: Literal["organization", "account"] | None = None
     archived_at: datetime | None = None
     deleted_at: datetime | None = None
     created_at: datetime
@@ -147,6 +150,7 @@ def environment_to_response(environment: Environment) -> EnvironmentResponse:
         description=environment.description,
         config=environment_config_to_response(environment.config),
         metadata=environment.metadata_,
+        scope=environment_scope(environment.config),
         archived_at=environment.archived_at,
         deleted_at=environment.deleted_at,
         created_at=environment.created_at,
@@ -156,6 +160,7 @@ def environment_to_response(environment: Environment) -> EnvironmentResponse:
 
 def environment_config_to_response(config: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(config or {})
+    normalized.pop("_scope", None)
     env_type = normalized.get("type", "cloud")
     normalized["type"] = env_type
     if env_type != "cloud":
@@ -189,3 +194,17 @@ def environment_config_to_response(config: dict[str, Any]) -> dict[str, Any]:
         "pip": list(packages.get("pip") or []),
     }
     return normalized
+
+
+def environment_config_with_scope(config: dict[str, Any] | None, scope: str | None) -> dict[str, Any]:
+    normalized = dict(config or {"type": "cloud"})
+    if scope is not None:
+        normalized["_scope"] = scope
+    return normalized
+
+
+def environment_scope(config: dict[str, Any] | None) -> Literal["organization", "account"] | None:
+    scope = (config or {}).get("_scope")
+    if scope in {"organization", "account"}:
+        return scope
+    return None

@@ -208,6 +208,22 @@ async def test_anthropic_sdk_environment_contract():
         assert deleted.id == deletable.id
         assert deleted.type == "environment_deleted"
 
+        scoped_environment = await client.beta.environments.create(
+            name="SDK Scoped Environment",
+            config={"type": "self_hosted"},
+            scope="account",
+            **BETA_KWARG,
+        )
+        assert scoped_environment.scope == "account"
+        assert "_scope" not in scoped_environment.config.model_dump()
+
+        updated_scoped_environment = await client.beta.environments.update(
+            scoped_environment.id,
+            scope="organization",
+            **BETA_KWARG,
+        )
+        assert updated_scoped_environment.scope == "organization"
+
 
 async def test_anthropic_sdk_environment_work_contract():
     async with anthropic_client() as (client, _):

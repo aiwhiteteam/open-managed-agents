@@ -19,7 +19,7 @@ Current passing coverage:
 - Managed Agents beta SDK surface discovery.
 - `client.beta.agents.create/retrieve/update/list/archive`.
 - `client.beta.agents.retrieve(version=...)` and `client.beta.agents.versions.list`.
-- `client.beta.environments.create/retrieve/update/list/archive/delete`.
+- `client.beta.environments.create/retrieve/update/list/archive/delete`, including self-hosted `scope`.
 - `client.beta.environments.work.poll/list/retrieve/update/ack/heartbeat/stats/stop`.
 - `client.beta.sessions.create/retrieve/update/list/archive/delete`, including `deployment_id` filtering.
 - `client.beta.sessions.create` resource union for `file`, `github_repository`, and `memory_store`, including GitHub token redaction.

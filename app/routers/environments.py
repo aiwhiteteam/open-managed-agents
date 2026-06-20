@@ -15,6 +15,8 @@ from app.models.environments import (
     EnvironmentCreateRequest,
     EnvironmentResponse,
     EnvironmentUpdateRequest,
+    environment_config_with_scope,
+    environment_scope,
     environment_to_response,
 )
 from app.models.resources import GenericBody
@@ -36,7 +38,7 @@ async def create_environment(
     environment = await env_q.create_environment(
         db,
         name=body.name,
-        config=body.config,
+        config=environment_config_with_scope(body.config, body.scope),
         description=body.description,
         metadata=body.metadata,
     )
@@ -77,11 +79,16 @@ async def update_environment(
     environment = await env_q.get_environment(db, environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
+    config = body.config
+    if body.scope is not None:
+        config = environment_config_with_scope(config or environment.config, body.scope)
+    elif config is not None:
+        config = environment_config_with_scope(config, environment_scope(environment.config))
     environment = await env_q.update_environment(
         db,
         environment,
         name=body.name,
-        config=body.config,
+        config=config,
         description=body.description,
         metadata=_merge_metadata(environment.metadata_, body.metadata) if body.metadata is not None else None,
     )
