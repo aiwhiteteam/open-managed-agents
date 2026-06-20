@@ -140,13 +140,25 @@ async def test_anthropic_sdk_files_contract():
 
 async def test_anthropic_sdk_agent_versions_contract():
     async with anthropic_client() as (client, _):
-        agent = await client.beta.agents.create(name="SDK Versions Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
+        agent = await client.beta.agents.create(
+            name="SDK Versions Agent",
+            model={"id": "gpt-5.5"},
+            system="v1",
+            **BETA_KWARG,
+        )
         await client.beta.agents.update(agent.id, version=agent.version, system="v2", **BETA_KWARG)
         versions = [item async for item in client.beta.agents.versions.list(agent.id, limit=20, **BETA_KWARG)]
 
         assert [item.version for item in versions] == [2, 1]
         assert all(item.type == "agent" for item in versions)
         assert all(item.id == agent.id for item in versions)
+
+        retrieved_v1 = await client.beta.agents.retrieve(agent.id, version=1, **BETA_KWARG)
+        retrieved_latest = await client.beta.agents.retrieve(agent.id, **BETA_KWARG)
+        assert retrieved_v1.version == 1
+        assert retrieved_v1.system == "v1"
+        assert retrieved_latest.version == 2
+        assert retrieved_latest.system == "v2"
 
 
 async def test_anthropic_sdk_environment_contract():

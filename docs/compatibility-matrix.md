@@ -7,7 +7,7 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | `/v1` URL shape | Implemented | Matches Anthropic-style stable root path. |
 | Native beta header | Implemented | `open-managed-agents-beta: open-managed-agents-2026-04-01` is accepted without Anthropic headers. |
 | Claude compatibility headers | Implemented | `anthropic-beta: managed-agents-2026-04-01` is accepted; `anthropic-version: 2023-06-01` is required when using `anthropic-beta`. |
-| Agent create/list/retrieve | Implemented | Flexible JSON config fields. |
+| Agent create/list/retrieve | Implemented | Flexible JSON config fields, including official SDK `retrieve(version=...)`. |
 | Agent update version guard | Implemented | Requires current `version`; stale writes return 409. |
 | Agent no-op update detection | Implemented | Existing version is returned. |
 | Agent metadata merge/delete | Implemented | Empty string deletes a key. |

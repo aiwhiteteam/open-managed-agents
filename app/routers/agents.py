@@ -88,15 +88,22 @@ async def list_agent_versions(
 @router.get("/{agent_id}", response_model=AgentResponse)
 async def retrieve_agent(
     agent_id: str,
+    version: int | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     agent = await agents_q.get_agent(db, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
-    version = await agents_q.get_active_agent_version(db, agent)
-    if version is None:
+    agent_version = (
+        await agents_q.get_agent_version(db, agent_id=agent.id, version=version)
+        if version is not None
+        else await agents_q.get_active_agent_version(db, agent)
+    )
+    if agent_version is None:
         raise HTTPException(status_code=404, detail="Agent version not found")
-    return agent_to_response(agent, version)
+    if version is not None:
+        return version_to_agent_response(agent, agent_version)
+    return agent_to_response(agent, agent_version)
 
 
 @router.post("/{agent_id}", response_model=AgentResponse)
