@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
 from app.config import get_settings
+from app.content_scan import UnsafeContentError, validate_upload_content
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import ListResponse
@@ -182,6 +183,7 @@ async def _create_skill_version_resource(
     content: bytes,
 ):
     _enforce_skill_archive_size(content)
+    _scan_skill_content(content, label="Skill archive")
     sha256 = hashlib.sha256(content).hexdigest()
     try:
         should_store_in_object_storage()
@@ -251,6 +253,7 @@ async def _skill_payload_from_request(request: Request) -> tuple[dict[str, Any],
             if hasattr(value, "read"):
                 raw = await value.read()
                 filename = _normalize_zip_path(getattr(value, "filename", key))
+                _scan_skill_content(raw, label=f"Skill file {filename}")
                 uploaded_files.append((filename, raw, getattr(value, "content_type", None)))
                 file_records.append(
                     {
@@ -282,6 +285,7 @@ async def _skill_payload_from_request(request: Request) -> tuple[dict[str, Any],
             raw_value = item.get("content", "")
             raw = raw_value.encode("utf-8") if isinstance(raw_value, str) else bytes(raw_value)
             mime_type = item.get("mime_type")
+            _scan_skill_content(raw, label=f"Skill file {filename}")
             uploaded_files.append((filename, raw, mime_type))
             file_records.append({"filename": filename, "mime_type": mime_type, "size_bytes": len(raw)})
         manifest = _validate_skill_files(uploaded_files)
@@ -314,6 +318,13 @@ def _enforce_skill_archive_size(content: bytes) -> None:
             status_code=413,
             detail=f"Skill archive exceeds maximum size of {max_bytes} bytes",
         )
+
+
+def _scan_skill_content(content: bytes, *, label: str) -> None:
+    try:
+        validate_upload_content(content, label=label)
+    except UnsafeContentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _new_skill_version_id(previous: Any = None) -> int:

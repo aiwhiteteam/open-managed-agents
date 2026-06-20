@@ -95,6 +95,23 @@ async def test_file_upload_size_limit(client, monkeypatch):
     assert "maximum size" in response.json()["error"]["message"]
 
 
+async def test_file_upload_content_scan_rejects_eicar_signature(client):
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={
+            "file": (
+                "eicar.txt",
+                b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert "content scan" in response.json()["error"]["message"]
+
+
 async def test_file_complete_requires_current_workspace_staged_key(client):
     response = await client.post(
         "/v1/files/presign",
@@ -166,6 +183,24 @@ async def test_skill_create_version_and_download(client):
     response = await client.get(f"/v1/skills/{skill['id']}/versions/{second_version}/content", headers=TEST_HEADERS)
     assert response.status_code == 200
     assert b"Updated" in response.content
+
+
+async def test_skill_upload_content_scan_rejects_eicar_signature(client):
+    response = await client.post(
+        "/v1/skills",
+        headers=TEST_HEADERS,
+        data={"display_title": "Unsafe Skill"},
+        files={
+            "files": (
+                "skill/SKILL.md",
+                b"---\nname: unsafe\ndescription: Unsafe skill.\n---\nEICAR-STANDARD-ANTIVIRUS-TEST-FILE",
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+    assert "content scan" in response.json()["error"]["message"]
 
 
 async def test_vault_credentials_memory_and_deployment_metadata(client):

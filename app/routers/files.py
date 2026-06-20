@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
 from app.config import get_settings
+from app.content_scan import UnsafeContentError, validate_upload_content
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import FlexibleApiModel, ListResponse
@@ -60,6 +61,7 @@ async def upload_file(
         get_settings().oma_max_file_upload_bytes,
         label="File upload",
     )
+    _scan_upload_content(content, label="File upload")
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
     existing = await _find_deduplicated_file(db, sha256=sha256)
@@ -158,14 +160,22 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
             get_settings().oma_max_file_upload_bytes,
             label="File upload",
         )
+    staged_content, _stored_content_type = await download_file_with_type(body.key)
+    _scan_upload_content(staged_content, label="File upload")
+    staged_sha256 = hashlib.sha256(staged_content).hexdigest()
+    if body.sha256 and body.sha256 != staged_sha256:
+        raise HTTPException(status_code=422, detail="File upload sha256 does not match staged object")
+    sha256 = body.sha256 or staged_sha256
+    if size_bytes is None:
+        size_bytes = len(staged_content)
     filename = body.filename or body.key.split("/")[-1]
-    existing = await _find_deduplicated_file(db, sha256=body.sha256)
+    existing = await _find_deduplicated_file(db, sha256=sha256)
     if existing is None:
         permanent_key = object_key(
             namespace="oma",
             category="files",
             filename=filename,
-            content_sha256=body.sha256,
+            content_sha256=sha256,
         )
         await copy_file(body.key, permanent_key, content_type=mime_type)
         storage_key = permanent_key
@@ -196,7 +206,7 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
         storage_key=storage_key,
         storage_url=storage_url,
         size_bytes=int(size_bytes) if size_bytes is not None else None,
-        sha256=body.sha256,
+        sha256=sha256,
     )
     await db.commit()
     return resource_to_response(resource, public_type="file")
@@ -268,6 +278,13 @@ def _enforce_size_limit(size_bytes: int, max_bytes: int, *, label: str) -> None:
             status_code=413,
             detail=f"{label} exceeds maximum size of {max_bytes} bytes",
         )
+
+
+def _scan_upload_content(content: bytes, *, label: str) -> None:
+    try:
+        validate_upload_content(content, label=label)
+    except UnsafeContentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):
