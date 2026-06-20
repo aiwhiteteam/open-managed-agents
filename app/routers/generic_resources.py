@@ -401,6 +401,7 @@ async def retrieve_memory_version(
     version = await res_q.get_resource(db, resource_id=memory_version_id, resource_type="memory_version")
     if version is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
+    await _must_exist(db, version.parent_id, "memory", parent_id=memory_store_id)
     return _resource_response(version)
 
 

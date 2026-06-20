@@ -175,6 +175,25 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     assert "content" not in current_memory
 
 
+async def test_memory_version_retrieve_requires_matching_store(client):
+    store = await _create_store(client)
+    other_store = await _create_store(client)
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "customers/acme", "content": "store scoped"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.get(
+        f"/v1/memory_stores/{other_store['id']}/memory_versions/{memory['memory_version_id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 404
+
+
 def _memory_resource(memory_store_id: str, path_key: str, created_at: datetime) -> ManagedResource:
     return ManagedResource(
         id=new_id("mem"),
