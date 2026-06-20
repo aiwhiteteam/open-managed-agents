@@ -105,6 +105,7 @@ async def list_sessions(
     include_archived: bool = False,
     order: str = "desc",
     memory_store_id: str | None = None,
+    deployment_id: str | None = None,
     created_at_gt: datetime | None = Query(default=None, alias="created_at[gt]"),
     created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
     created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
@@ -125,6 +126,12 @@ async def list_sessions(
             if await _session_has_memory_store(db, session, memory_store_id):
                 filtered_sessions.append(session)
         sessions = filtered_sessions
+    if deployment_id is not None:
+        sessions = [
+            session
+            for session in sessions
+            if str((session.metadata_ or {}).get("deployment_id") or "") == deployment_id
+        ]
     sessions = sort_by_created_at(sessions, order=order)
     responses = []
     for session in sessions:

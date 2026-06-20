@@ -793,6 +793,11 @@ async def test_anthropic_sdk_deployments_contract():
         assert run.trigger_context.type == "manual"
         assert run.session_id is not None
 
+        deployment_sessions = [
+            item async for item in client.beta.sessions.list(deployment_id=deployment.id, limit=20, **BETA_KWARG)
+        ]
+        assert any(item.id == run.session_id for item in deployment_sessions)
+
         retrieved_run = await client.beta.deployment_runs.retrieve(run.id, **BETA_KWARG)
         assert retrieved_run.id == run.id
 

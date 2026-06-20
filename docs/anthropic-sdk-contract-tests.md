@@ -20,7 +20,7 @@ Current passing coverage:
 - `client.beta.agents.create/retrieve/update/list/archive`.
 - `client.beta.agents.versions.list`.
 - `client.beta.environments.create/retrieve/update/list/archive/delete`.
-- `client.beta.sessions.create/retrieve/update/list/archive/delete`.
+- `client.beta.sessions.create/retrieve/update/list/archive/delete`, including `deployment_id` filtering.
 - `client.beta.sessions.create` resource union for `file`, `github_repository`, and `memory_store`, including GitHub token redaction.
 - `client.beta.sessions.update` metadata/title patches and session-local agent `tools`/`mcp_servers` replacement.
 - `client.beta.sessions.events.send/list`, including SDK `types[]` filtering.
