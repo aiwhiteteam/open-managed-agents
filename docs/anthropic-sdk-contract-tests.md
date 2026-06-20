@@ -24,6 +24,7 @@ Current passing coverage:
 - `client.beta.sessions.create` resource union for `file`, `github_repository`, and `memory_store`, including GitHub token redaction.
 - `client.beta.sessions.update` metadata/title patches and session-local agent `tools`/`mcp_servers` replacement.
 - `client.beta.sessions.events.send/list`.
+- SDK SSE decoder and Managed Agents stream-event union parsing for session event payloads.
 - `client.beta.sessions.resources.add/retrieve/update/list/delete`.
 - `client.beta.sessions.threads.list/retrieve/archive`.
 - `client.beta.sessions.threads.events.list`.
@@ -50,6 +51,7 @@ Important remaining coverage gaps:
 - Exhaustive pagination edge cases across every route group.
 - Full filter semantics for every list endpoint, especially less common filters.
 - Production runtime semantics behind the validated response shapes.
+- End-to-end infinite HTTP SSE consumption through ASGITransport. The contract suite validates the SDK decoder/union parser, while route-level stream behavior is covered by local API tests.
 
 Reference sources:
 

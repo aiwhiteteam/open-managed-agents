@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import hashlib
+import json
 
 import httpx
 import pytest
@@ -8,6 +9,10 @@ from httpx import ASGITransport
 anthropic = pytest.importorskip("anthropic")
 
 from anthropic import AsyncAnthropic  # noqa: E402
+from anthropic._streaming import SSEDecoder  # noqa: E402
+from anthropic.types.beta.sessions.beta_managed_agents_stream_session_events import (  # noqa: E402
+    BetaManagedAgentsStreamSessionEvents,
+)
 
 pytestmark = pytest.mark.contract
 
@@ -411,6 +416,41 @@ async def test_anthropic_sdk_session_contract():
         deleted = await client.beta.sessions.delete(deletable.id, **BETA_KWARG)
         assert deleted.id == deletable.id
         assert deleted.type == "session_deleted"
+
+
+async def test_anthropic_sdk_session_event_stream_parser_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(name="SDK Stream Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
+        environment = await client.beta.environments.create(
+            name="SDK Stream Environment",
+            config={"type": "cloud"},
+            **BETA_KWARG,
+        )
+        session = await client.beta.sessions.create(
+            agent={"type": "agent", "id": agent.id, "version": agent.version},
+            environment_id=environment.id,
+            **BETA_KWARG,
+        )
+
+        first_event = [item async for item in client.beta.sessions.events.list(session.id, limit=1, **BETA_KWARG)][0]
+        event_payload = first_event.model_dump(mode="json")
+        sse_frame = (
+            f"id: {event_payload['seq']}\n"
+            f"event: {event_payload['type']}\n"
+            f"data: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
+        )
+        [raw_sse] = list(SSEDecoder().iter_bytes(iter([sse_frame.encode("utf-8")])))
+        data = raw_sse.json()
+        if "type" not in data:
+            data["type"] = raw_sse.event
+        parsed_event = client._process_response_data(
+            data=data,
+            cast_to=BetaManagedAgentsStreamSessionEvents,
+            response=httpx.Response(200, request=httpx.Request("GET", "http://testserver")),
+        )
+
+        assert parsed_event.type == "session.status_idle"
+        assert parsed_event.session_id == session.id
 
 
 async def test_anthropic_sdk_skills_contract():
