@@ -10,7 +10,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 - Keep exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core resolves every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
 - Complete durable session state machine semantics: transient runtime failures now enter `rescheduling` with retry windows and capped attempts; real durable queue execution and OpenAI Agents SDK snapshot resume execution remain TODO.
-- Wire `requires_action` pauses for custom tools and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
+- Wire `requires_action` pauses for custom tools, self-hosted tool results, and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
 - Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events. `processed_at = null` for queued user/system input events and non-null processed timestamps for output events have local coverage.
@@ -39,7 +39,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Contract Extraction
 
 - Maintain `tests/contract/test_anthropic_sdk_contract.py`, which points the official Anthropic Python SDK at this service with strict response validation.
-- Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD, agent versions, environment lifecycle, session lifecycle/events/resources/threads, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle, memory store/memory/memory-version lifecycle, deployment/deployment-run lifecycle, and user profile lifecycle.
+- Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD/versioned retrieve, agent versions, environment lifecycle/scope/work queue, session lifecycle/events/resources/threads, `user.tool_result`, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle including auth unions, memory store/memory/memory-version lifecycle, deployment/deployment-run lifecycle, and user profile lifecycle.
 - Expand pagination/filter contract tests from representative SDK coverage to exhaustive per-route edge cases, especially less common filters. Invalid cursor handling, expired cursor handling, max limit clamping, timestamp aliases, and core SDK pagination paths have test coverage.
 - Verify exact deleted-resource response shapes for future route families as they are added.
 
@@ -64,7 +64,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Sandbox And Environments
 
 - Map `cloud` environments to a real production sandbox provider.
-- Map `self_hosted` environments to a real worker queue.
+- Replace the current Postgres-backed `self_hosted` worker queue with a production durable queue provider when deploying at scale.
 - Add production retry execution and hosted worker identity/RBAC. Optional shared worker-token auth, HTTP/CLI worker lease ownership enforcement, automatic expired-lease recovery, and retry-at backoff gates have local coverage.
 - Enforce network policies, package installation controls, and sandbox resource limits in real sandbox providers. Config validation and runtime policy summaries are covered locally.
 
