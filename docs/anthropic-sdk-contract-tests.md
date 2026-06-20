@@ -32,6 +32,7 @@ Current passing coverage:
 - `client.beta.files.upload/retrieve_metadata/list/download/delete`, including session `scope_id` filtering.
 - `client.beta.skills.create/retrieve/list/delete`.
 - `client.beta.skills.versions.create/retrieve/list/download/delete`.
+- Agent skill refs using official `custom` and `anthropic` skill union shapes.
 - Skill multipart uploads for both create paths, using the official SDK's `display_title` and `files` request shape.
 - Official-compatible epoch-microsecond skill version identifiers.
 - `client.beta.vaults.create/retrieve/update/list/archive/delete`.

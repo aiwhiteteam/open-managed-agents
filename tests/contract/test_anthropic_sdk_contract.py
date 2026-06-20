@@ -663,6 +663,20 @@ async def test_anthropic_sdk_skills_contract():
         listed = [item async for item in client.beta.skills.list(limit=20, **BETA_KWARG)]
         assert any(item.id == skill.id for item in listed)
 
+        skilled_agent = await client.beta.agents.create(
+            name="SDK Skilled Agent",
+            model={"id": "gpt-5.5"},
+            skills=[
+                {"type": "custom", "skill_id": skill.id, "version": skill.latest_version},
+                {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
+            ],
+            **BETA_KWARG,
+        )
+        assert [(item.type, item.skill_id, item.version) for item in skilled_agent.skills] == [
+            ("custom", skill.id, skill.latest_version),
+            ("anthropic", "xlsx", "latest"),
+        ]
+
         version = await client.beta.skills.versions.create(
             skill.id,
             files=[

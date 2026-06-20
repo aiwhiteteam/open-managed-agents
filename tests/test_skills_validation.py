@@ -102,14 +102,16 @@ async def test_agent_skill_references_are_validated_and_normalized(client):
             "skills": [
                 {"type": "skill", "id": skill["id"], "version": skill["latest_version"]},
                 {"skill_id": skill["id"], "version": "latest"},
+                {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
             ],
         },
     )
     assert response.status_code == 201, response.text
     agent = response.json()
     assert agent["skills"] == [
-        {"type": "skill", "id": skill["id"], "version": skill["latest_version"]},
-        {"type": "skill", "id": skill["id"], "version": "latest"},
+        {"type": "custom", "skill_id": skill["id"], "version": skill["latest_version"]},
+        {"type": "custom", "skill_id": skill["id"], "version": "latest"},
+        {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
     ]
 
     response = await client.patch(
