@@ -68,6 +68,7 @@ class Environment(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=DEFAULT_WORKSPACE_ID, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, nullable=False, default=dict)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

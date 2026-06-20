@@ -10,6 +10,7 @@ from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import FlexibleApiModel, ListResponse
 from app.models.resources import deleted_response, resource_to_response
+from app.pagination import paginate_by_id, sort_by_created_at
 from app.storage import (
     StorageConfigurationError,
     copy_file,
@@ -167,9 +168,20 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
 
 
 @router.get("")
-async def list_files(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    files = await res_q.list_resources(db, resource_type="file", limit=limit)
-    return ListResponse[dict].from_items([resource_to_response(f, public_type="file") for f in files])
+async def list_files(
+    limit: int = 50,
+    after_id: str | None = None,
+    before_id: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    files = await res_q.list_resources(db, resource_type="file", limit=1000)
+    files = sort_by_created_at(files, order="desc")
+    return paginate_by_id(
+        [resource_to_response(f, public_type="file") for f in files],
+        limit=limit,
+        after_id=after_id,
+        before_id=before_id,
+    )
 
 
 @router.get("/{file_id}")

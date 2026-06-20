@@ -3,33 +3,18 @@ from app.runtime.providers import provider_capabilities, resolve_runtime_provide
 from app.runtime.runner import _model_settings_for_provider, _sdk_tools_for_provider
 
 
-def test_deepseek_provider_resolution(monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+def test_openai_provider_resolution(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     get_settings.cache_clear()
 
-    config = resolve_runtime_provider({"provider": "deepseek", "id": "deepseek-v4-pro"})
+    config = resolve_runtime_provider({"provider": "openai", "id": "gpt-5.5"})
 
-    assert config.provider == "deepseek"
-    assert config.model_id == "deepseek-v4-pro"
-    assert config.base_url == "https://api.deepseek.com"
-    assert config.api_key == "test-deepseek-key"
-    assert config.use_responses is False
-    assert config.capabilities.responses_api is False
+    assert config.provider == "openai"
+    assert config.model_id == "gpt-5.5"
+    assert config.api_key == "test-openai-key"
+    assert config.use_responses is True
+    assert config.capabilities.responses_api is True
     assert config.capabilities.tool_calls is True
-
-
-def test_minimax_provider_resolution(monkeypatch):
-    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
-    get_settings.cache_clear()
-
-    config = resolve_runtime_provider({"provider": "minimax"})
-
-    assert config.provider == "minimax"
-    assert config.model_id == "MiniMax-M3"
-    assert config.base_url == "https://api.minimaxi.com/v1"
-    assert config.api_key == "test-minimax-key"
-    assert config.use_responses is False
-    assert "presence_penalty" in config.capabilities.unsupported_parameters
 
 
 def test_custom_openai_compatible_provider_resolution(monkeypatch):
@@ -49,26 +34,70 @@ def test_custom_openai_compatible_provider_resolution(monkeypatch):
     assert config.use_responses is False
 
 
+def test_deepseek_openai_compatible_provider_resolution(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"deepseek":{"api_key_env":"DEEPSEEK_API_KEY","base_url":"https://api.deepseek.com/v1","default_model":"deepseek-chat"}}',
+    )
+    get_settings.cache_clear()
+
+    config = resolve_runtime_provider({"provider_id": "deepseek", "id": "deepseek-reasoner"})
+
+    assert config.provider == "deepseek"
+    assert config.model_id == "deepseek-reasoner"
+    assert config.base_url == "https://api.deepseek.com/v1"
+    assert config.api_key == "test-deepseek-key"
+    assert config.use_responses is False
+    assert config.capabilities.hosted_tools is False
+
+
+def test_minimax_openai_compatible_provider_resolution(monkeypatch):
+    monkeypatch.setenv("MINI_MAX_API_KEY", "test-minimax-key")
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"mini-max":{"base_url":"https://api.minimax.io/v1","default_model":"MiniMax-M1","capabilities":{"multimodal_input":true,"unsupported_parameters":["previous_response_id","prompt"]}}}',
+    )
+    get_settings.cache_clear()
+
+    config = resolve_runtime_provider({"model": "mini-max/MiniMax-Text-01"})
+
+    assert config.provider == "mini_max"
+    assert config.model_id == "MiniMax-Text-01"
+    assert config.base_url == "https://api.minimax.io/v1"
+    assert config.api_key == "test-minimax-key"
+    assert config.capabilities.multimodal_input is True
+    assert "previous_response_id" in config.capabilities.unsupported_parameters
+
+
 def test_provider_capability_map(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     monkeypatch.setenv("OPENAI_USE_RESPONSES", "true")
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"example":{"api_key_env":"EXAMPLE_API_KEY","base_url":"https://api.example.com/v1","default_model":"example-chat"}}',
+    )
     get_settings.cache_clear()
 
     openai = provider_capabilities("openai")
-    deepseek = provider_capabilities("deepseek")
+    example = provider_capabilities("example")
 
     assert openai.responses_api is True
     assert openai.hosted_tools is True
-    assert deepseek.responses_api is False
-    assert deepseek.hosted_tools is False
+    assert example.responses_api is False
+    assert example.hosted_tools is False
 
 
 def test_provider_capability_map_filters_model_settings(monkeypatch):
     from agents import ModelSettings
 
-    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
+    monkeypatch.setenv("EXAMPLE_API_KEY", "test-example-key")
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"example":{"api_key_env":"EXAMPLE_API_KEY","base_url":"https://api.example.com/v1","default_model":"example-chat","capabilities":{"unsupported_parameters":["presence_penalty","reasoning"]}}}',
+    )
     get_settings.cache_clear()
-    config = resolve_runtime_provider({"provider": "minimax", "id": "MiniMax-M3"})
+    config = resolve_runtime_provider({"provider": "example", "id": "example-chat"})
 
     model_settings, removed = _model_settings_for_provider(
         {"model_settings": {"temperature": 0.2, "presence_penalty": 1.0, "reasoning": {"effort": "low"}}},
@@ -83,9 +112,13 @@ def test_provider_capability_map_filters_model_settings(monkeypatch):
 
 
 def test_provider_capability_map_filters_hosted_tools(monkeypatch):
-    monkeypatch.setenv("MINIMAX_API_KEY", "test-minimax-key")
+    monkeypatch.setenv("EXAMPLE_API_KEY", "test-example-key")
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"example":{"api_key_env":"EXAMPLE_API_KEY","base_url":"https://api.example.com/v1","default_model":"example-chat"}}',
+    )
     get_settings.cache_clear()
-    config = resolve_runtime_provider({"provider": "minimax", "id": "MiniMax-M3"})
+    config = resolve_runtime_provider({"provider": "example", "id": "example-chat"})
 
     sdk_tools, enabled, filtered = _sdk_tools_for_provider(
         [{"type": "web_search"}, {"type": "agent_toolset_20260401"}],
@@ -121,10 +154,14 @@ def test_openai_hosted_tools_are_mapped(monkeypatch):
 
 
 def test_unconfigured_provider_falls_back_in_auto(monkeypatch):
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("EXAMPLE_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "OMA_OPENAI_COMPATIBLE_PROVIDERS",
+        '{"example":{"api_key_env":"EXAMPLE_API_KEY","base_url":"https://api.example.com/v1","default_model":"example-chat"}}',
+    )
     get_settings.cache_clear()
 
-    assert runtime_provider_configured({"provider": "deepseek", "id": "deepseek-v4-pro"}) is False
+    assert runtime_provider_configured({"provider": "example", "id": "example-chat"}) is False
 
 
 def test_claude_model_id_falls_back_to_default_openai_model(monkeypatch):

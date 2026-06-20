@@ -13,6 +13,7 @@ from app.models.environments import (
     environment_to_response,
 )
 from app.models.resources import GenericBody, resource_to_response
+from app.pagination import paginate, sort_by_created_at
 from app.runtime.work_queue import ack_work, heartbeat_work, lease_next_work, stop_work
 
 router = APIRouter(
@@ -31,6 +32,7 @@ async def create_environment(
         db,
         name=body.name,
         config=body.config,
+        description=body.description,
         metadata=body.metadata,
     )
     await db.commit()
@@ -40,12 +42,13 @@ async def create_environment(
 @router.get("", response_model=ListResponse[EnvironmentResponse])
 async def list_environments(
     limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
     db: AsyncSession = Depends(get_session),
 ):
-    environments = await env_q.list_environments(db, limit=limit)
-    return ListResponse[EnvironmentResponse].from_items(
-        [environment_to_response(env) for env in environments]
-    )
+    environments = await env_q.list_environments(db, limit=1000, include_archived=include_archived)
+    environments = sort_by_created_at(environments, order="desc")
+    return paginate([environment_to_response(env) for env in environments], limit=limit, page=page)
 
 
 @router.get("/{environment_id}", response_model=EnvironmentResponse)
@@ -74,7 +77,8 @@ async def update_environment(
         environment,
         name=body.name,
         config=body.config,
-        metadata=body.metadata,
+        description=body.description,
+        metadata=_merge_metadata(environment.metadata_, body.metadata) if body.metadata is not None else None,
     )
     await db.commit()
     return environment_to_response(environment)
@@ -93,7 +97,7 @@ async def archive_environment(
     return environment_to_response(environment)
 
 
-@router.delete("/{environment_id}", status_code=204)
+@router.delete("/{environment_id}")
 async def delete_environment(
     environment_id: str,
     db: AsyncSession = Depends(get_session),
@@ -103,12 +107,14 @@ async def delete_environment(
         raise HTTPException(status_code=404, detail="Environment not found")
     await env_q.delete_environment(db, environment)
     await db.commit()
+    return {"id": environment.id, "type": "environment_deleted", "deleted": True}
 
 
 @router.get("/{environment_id}/work")
 async def list_environment_work(
     environment_id: str,
     limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -116,9 +122,9 @@ async def list_environment_work(
         db,
         resource_type="environment_work",
         parent_id=environment_id,
-        limit=limit,
+        limit=1000,
     )
-    return ListResponse[dict].from_items([resource_to_response(item, public_type="self_hosted_work") for item in work])
+    return paginate([resource_to_response(item, public_type="self_hosted_work") for item in work], limit=limit, page=page)
 
 
 @router.get("/{environment_id}/work/poll")
@@ -259,3 +265,13 @@ async def _must_get_work(db: AsyncSession, environment_id: str, work_id: str):
     if work is None:
         raise HTTPException(status_code=404, detail="Environment work item not found")
     return work
+
+
+def _merge_metadata(current: dict, patch: dict) -> dict:
+    merged = dict(current or {})
+    for key, value in (patch or {}).items():
+        if value is None or value == "":
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged

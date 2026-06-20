@@ -19,27 +19,19 @@ class Settings(BaseSettings):
     openai_base_url: str = ""
     openai_use_responses: bool = True
 
+    oma_api_key: str = ""
     oma_api_keys: Annotated[list[str], NoDecode] = []
     oma_require_beta_header: bool = True
     oma_require_anthropic_version_header: bool = True
-    oma_runtime_backend: str = "auto"
+    oma_runtime_backend: str = "openai"
     oma_default_model_provider: str = "openai"
     oma_default_openai_model: str = "gpt-5.5"
     oma_default_workspace_id: str = "wrkspc_default"
     oma_api_key_workspaces: Annotated[dict[str, str], NoDecode] = Field(default_factory=dict)
     oma_event_poll_interval_seconds: float = 0.5
-    oma_storage_backend: str = "s3"
     oma_max_file_upload_bytes: int = 50 * 1024 * 1024
     oma_max_skill_archive_bytes: int = 25 * 1024 * 1024
     oma_openai_compatible_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
-
-    deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_default_model: str = "deepseek-v4-pro"
-
-    minimax_api_key: str = ""
-    minimax_base_url: str = "https://api.minimaxi.com/v1"
-    minimax_default_model: str = "MiniMax-M3"
 
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""
@@ -47,12 +39,6 @@ class Settings(BaseSettings):
     s3_bucket_name: str = ""
     s3_public_url: str = ""
     s3_region: str = "auto"
-
-    r2_account_id: str = ""
-    r2_access_key_id: str = ""
-    r2_secret_access_key: str = ""
-    r2_files_bucket_name: str = ""
-    r2_files_url: str = ""
 
     app_env: str = "local"
     sentry_dsn: str = ""

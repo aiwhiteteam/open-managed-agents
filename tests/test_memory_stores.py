@@ -25,10 +25,11 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     )
     assert response.status_code == 201, response.text
     memory = response.json()
-    assert memory["path"] == ["customers", "acme"]
+    assert memory["path"] == "/customers/acme"
     assert memory["path_key"] == "customers/acme"
     assert memory["version"] == 1
     assert memory["updated_by"] == "test"
+    assert memory["content_size_bytes"] == len("ACME prefers email.".encode())
 
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
@@ -66,15 +67,46 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     )
     assert response.status_code == 409
 
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "if_version": 2,
+            "path": "customers/acme-renamed",
+            "content": "ACME renamed path.",
+            "actor": "operator",
+        },
+    )
+    assert response.status_code == 200, response.text
+    renamed = response.json()
+    assert renamed["version"] == 3
+    assert renamed["path"] == "/customers/acme-renamed"
+    assert renamed["path_key"] == "customers/acme-renamed"
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories/by_path",
+        headers=TEST_HEADERS,
+        params={"path": "customers/acme"},
+    )
+    assert response.status_code == 404
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories/by_path",
+        headers=TEST_HEADERS,
+        params={"path": "customers/acme-renamed"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == memory["id"]
+
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories/{memory['id']}/versions",
         headers=TEST_HEADERS,
     )
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
-    assert [version["version"] for version in versions] == [2, 1]
+    assert [version["version"] for version in versions] == [3, 2, 1]
     assert versions[0]["actor"] == "operator"
-    assert versions[0]["operation"] == "update"
+    assert versions[0]["operation"] == "modified"
 
 
 async def test_memory_version_redaction_removes_snapshot_content(client):

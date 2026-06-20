@@ -14,6 +14,7 @@ async def create_environment(
     *,
     name: str,
     config: dict[str, Any],
+    description: str | None = None,
     metadata: dict[str, Any] | None = None,
     workspace_id: str | None = None,
 ) -> Environment:
@@ -21,6 +22,7 @@ async def create_environment(
         id=new_id("env"),
         workspace_id=workspace_id_or_default(workspace_id),
         name=name,
+        description=description or "",
         config=config,
         metadata_=metadata or {},
     )
@@ -48,9 +50,10 @@ async def list_environments(
     db: AsyncSession,
     *,
     limit: int = 50,
+    include_archived: bool = False,
     workspace_id: str | None = None,
 ) -> list[Environment]:
-    result = await db.execute(
+    stmt = (
         select(Environment)
         .where(
             Environment.deleted_at.is_(None),
@@ -59,6 +62,9 @@ async def list_environments(
         .order_by(Environment.created_at.desc())
         .limit(limit)
     )
+    if not include_archived:
+        stmt = stmt.where(Environment.archived_at.is_(None))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -68,10 +74,13 @@ async def update_environment(
     *,
     name: str | None = None,
     config: dict[str, Any] | None = None,
+    description: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> Environment:
     if name is not None:
         environment.name = name
+    if description is not None:
+        environment.description = description
     if config is not None:
         environment.config = config
     if metadata is not None:

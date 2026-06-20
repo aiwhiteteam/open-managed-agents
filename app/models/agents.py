@@ -89,6 +89,25 @@ def version_to_response(version: AgentVersion) -> AgentVersionResponse:
     )
 
 
+def version_to_agent_response(agent: Agent, version: AgentVersion) -> AgentResponse:
+    return AgentResponse(
+        id=agent.id,
+        name=version.name,
+        version=version.version,
+        model=version.model,
+        system=version.system,
+        description=version.description,
+        tools=version.tools,
+        mcp_servers=version.mcp_servers,
+        skills=version.skills,
+        multiagent=version.multiagent,
+        metadata=version.metadata_,
+        archived_at=agent.archived_at,
+        created_at=version.created_at,
+        updated_at=version.updated_at,
+    )
+
+
 def agent_to_response(agent: Agent, version: AgentVersion) -> AgentResponse:
     return AgentResponse(
         id=agent.id,

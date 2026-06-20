@@ -21,7 +21,7 @@ PREFIXES = {
     "deployment": "deploy",
     "deployment_run": "deprun",
     "user_profile": "uprof",
-    "session_resource": "res",
+    "session_resource": "sesrsc",
     "session_thread": "thread",
     "environment_work": "work",
 }
@@ -84,6 +84,28 @@ async def get_resource(
     )
     if resource_type is not None:
         stmt = stmt.where(ManagedResource.resource_type == resource_type)
+    if parent_id is not None:
+        stmt = stmt.where(ManagedResource.parent_id == parent_id)
+    if not include_deleted:
+        stmt = stmt.where(ManagedResource.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_resource_by_name(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    name: str,
+    parent_id: str | None = None,
+    include_deleted: bool = False,
+    workspace_id: str | None = None,
+) -> ManagedResource | None:
+    stmt = select(ManagedResource).where(
+        ManagedResource.resource_type == resource_type,
+        ManagedResource.name == name,
+        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+    )
     if parent_id is not None:
         stmt = stmt.where(ManagedResource.parent_id == parent_id)
     if not include_deleted:

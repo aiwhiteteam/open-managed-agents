@@ -1,0 +1,55 @@
+from tests.conftest import TEST_HEADERS
+
+
+async def test_page_cursor_rejects_invalid_cursor(client):
+    response = await client.get("/v1/agents", headers=TEST_HEADERS, params={"page": "not-a-page"})
+
+    assert response.status_code == 400
+    assert "Invalid page cursor" in response.json()["error"]["message"]
+
+
+async def test_file_id_cursor_rejects_unknown_cursor(client):
+    response = await client.get("/v1/files", headers=TEST_HEADERS, params={"after_id": "file_missing"})
+
+    assert response.status_code == 400
+    assert "Invalid pagination cursor" in response.json()["error"]["message"]
+
+
+async def test_created_at_filters_accept_sdk_aliases(client):
+    for index in range(2):
+        response = await client.post(
+            "/v1/agents",
+            headers=TEST_HEADERS,
+            json={"name": f"Filtered Agent {index}", "model": {"id": "gpt-5.5"}},
+        )
+        assert response.status_code == 201, response.text
+
+    response = await client.get("/v1/agents", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    first_created_at = response.json()["data"][0]["created_at"]
+
+    response = await client.get(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        params={"created_at[gte]": first_created_at, "created_at[lte]": first_created_at},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]
+    assert all(item["created_at"] == first_created_at for item in response.json()["data"])
+
+
+async def test_limit_is_clamped_to_safe_maximum(client):
+    for index in range(3):
+        response = await client.post(
+            "/v1/user_profiles",
+            headers=TEST_HEADERS,
+            json={"relationship": "external", "external_id": f"user-{index}"},
+        )
+        assert response.status_code == 201, response.text
+
+    response = await client.get("/v1/user_profiles", headers=TEST_HEADERS, params={"limit": 5000})
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 3
+    assert response.json()["has_more"] is False

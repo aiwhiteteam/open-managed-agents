@@ -14,7 +14,14 @@ from app.workspace import (
 
 CMA_MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
 OPEN_MANAGED_AGENTS_BETA = "open-managed-agents-2026-04-01"
-ACCEPTED_MANAGED_AGENTS_BETAS = {CMA_MANAGED_AGENTS_BETA, OPEN_MANAGED_AGENTS_BETA}
+ANTHROPIC_SKILLS_BETA = "skills-2025-10-02"
+ANTHROPIC_USER_PROFILES_BETA = "user-profiles-2026-03-24"
+ACCEPTED_MANAGED_AGENTS_BETAS = {
+    CMA_MANAGED_AGENTS_BETA,
+    OPEN_MANAGED_AGENTS_BETA,
+    ANTHROPIC_SKILLS_BETA,
+    ANTHROPIC_USER_PROFILES_BETA,
+}
 ANTHROPIC_API_VERSION = "2023-06-01"
 
 
@@ -34,11 +41,12 @@ class EnvApiKeyAuthProvider:
     async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
         settings = get_settings()
         workspace = default_workspace()
-        if not settings.oma_api_keys:
+        api_keys = _configured_api_keys(settings.oma_api_key, settings.oma_api_keys)
+        if not api_keys:
             return workspace
 
         token = credentials.x_api_key or _bearer_token(credentials.authorization)
-        if token not in settings.oma_api_keys:
+        if token not in api_keys:
             raise HTTPException(status_code=401, detail="Invalid API key")
         workspace_id = (
             settings.oma_api_key_workspaces.get(token)
@@ -75,7 +83,8 @@ async def require_api_access(
                 status_code=400,
                 detail=(
                     "Missing required beta header: "
-                    f"{CMA_MANAGED_AGENTS_BETA} or {OPEN_MANAGED_AGENTS_BETA}"
+                    f"{CMA_MANAGED_AGENTS_BETA}, {OPEN_MANAGED_AGENTS_BETA}, "
+                    f"{ANTHROPIC_SKILLS_BETA}, or {ANTHROPIC_USER_PROFILES_BETA}"
                 ),
             )
 
@@ -116,3 +125,9 @@ def _bearer_token(value: str | None) -> str | None:
     if value.startswith(prefix):
         return value[len(prefix) :]
     return None
+
+
+def _configured_api_keys(primary: str, legacy: list[str]) -> set[str]:
+    keys = {primary.strip()} if primary.strip() else set()
+    keys.update(key.strip() for key in legacy if key.strip())
+    return keys

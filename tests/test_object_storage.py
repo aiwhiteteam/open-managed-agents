@@ -8,9 +8,7 @@ from app.storage import (
     object_storage_configured,
     object_key,
     public_url_for_key,
-    r2_configured,
     should_store_in_object_storage,
-    should_store_in_r2,
 )
 
 
@@ -27,7 +25,6 @@ def _clear_s3_env(monkeypatch):
 
 
 def test_s3_object_storage_configuration(monkeypatch):
-    monkeypatch.setenv("OMA_STORAGE_BACKEND", "s3")
     monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.example.com")
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "secret")
@@ -50,34 +47,8 @@ def test_s3_object_storage_configuration(monkeypatch):
     ).startswith("workspaces/ws_test/oma/files/")
 
 
-def test_r2_legacy_alias_configuration(monkeypatch):
+def test_object_storage_requires_s3_configuration(monkeypatch):
     _clear_s3_env(monkeypatch)
-    monkeypatch.setenv("OMA_STORAGE_BACKEND", "r2")
-    monkeypatch.setenv("R2_ACCOUNT_ID", "account-id")
-    monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
-    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
-    monkeypatch.setenv("R2_FILES_BUCKET_NAME", "oma-files")
-    monkeypatch.setenv("R2_FILES_URL", "https://pub.example.com")
-    get_settings.cache_clear()
-
-    assert r2_configured() is True
-    assert should_store_in_r2() is True
-    assert object_storage_backend_label() == "r2"
-    assert public_url_for_key("skills/archive.zip") == "https://pub.example.com/skills/archive.zip"
-    assert is_object_storage_backend("r2") is True
-
-
-def test_database_storage_backend_is_not_supported(monkeypatch):
-    monkeypatch.setenv("OMA_STORAGE_BACKEND", "database")
-    get_settings.cache_clear()
-
-    with pytest.raises(StorageConfigurationError):
-        should_store_in_object_storage()
-
-
-def test_forced_object_storage_requires_configuration(monkeypatch):
-    _clear_s3_env(monkeypatch)
-    monkeypatch.setenv("OMA_STORAGE_BACKEND", "s3")
     get_settings.cache_clear()
 
     with pytest.raises(StorageConfigurationError):

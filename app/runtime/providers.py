@@ -111,47 +111,6 @@ def _provider_registry(settings: Settings) -> dict[str, dict[str, Any]]:
                 "reasoning_traces": settings.openai_use_responses,
             },
         },
-        "deepseek": {
-            "api_key": settings.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY", ""),
-            "api_key_env": "DEEPSEEK_API_KEY",
-            "base_url": settings.deepseek_base_url,
-            "default_model": settings.deepseek_default_model,
-            "use_responses": False,
-            "capabilities": {
-                "chat_completions": True,
-                "responses_api": False,
-                "streaming": True,
-                "tool_calls": True,
-                "hosted_tools": False,
-                "multimodal_input": False,
-                "reasoning_traces": False,
-                "unsupported_parameters": ("previous_response_id", "conversation_id", "prompt"),
-            },
-        },
-        "minimax": {
-            "api_key": settings.minimax_api_key or os.getenv("MINIMAX_API_KEY", ""),
-            "api_key_env": "MINIMAX_API_KEY",
-            "base_url": settings.minimax_base_url,
-            "default_model": settings.minimax_default_model,
-            "use_responses": False,
-            "capabilities": {
-                "chat_completions": True,
-                "responses_api": False,
-                "streaming": True,
-                "tool_calls": True,
-                "hosted_tools": False,
-                "multimodal_input": False,
-                "reasoning_traces": False,
-                "unsupported_parameters": (
-                    "previous_response_id",
-                    "conversation_id",
-                    "prompt",
-                    "presence_penalty",
-                    "frequency_penalty",
-                    "logit_bias",
-                ),
-            },
-        },
     }
     for raw_name, raw_config in settings.oma_openai_compatible_providers.items():
         name = _normalize_provider_name(raw_name)

@@ -13,7 +13,8 @@ from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import resources as res_q
 from app.models.common import ListResponse
-from app.models.resources import deleted_response, resource_to_response
+from app.models.resources import resource_to_response
+from app.pagination import paginate, sort_by_created_at
 from app.storage import (
     StorageConfigurationError,
     download_file_with_type,
@@ -46,16 +47,24 @@ async def create_skill(request: Request, db: AsyncSession = Depends(get_session)
     )
     version = await _create_skill_version_resource(db, skill.id, 1, data, content)
     await db.commit()
-    response = resource_to_response(skill, public_type="skill")
-    response["latest_version"] = 1
-    response["version"] = resource_to_response(version, public_type="skill_version")
+    response = _skill_response(skill)
+    response["version"] = _skill_version_response(version)
     return response
 
 
 @router.get("")
-async def list_skills(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    skills = await res_q.list_resources(db, resource_type="skill", limit=limit)
-    return ListResponse[dict].from_items([resource_to_response(skill, public_type="skill") for skill in skills])
+async def list_skills(
+    limit: int = 50,
+    page: str | None = None,
+    source: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    skills = await res_q.list_resources(db, resource_type="skill", limit=1000)
+    skills = sort_by_created_at(skills, order="desc")
+    responses = [_skill_response(skill) for skill in skills]
+    if source is not None:
+        responses = [skill for skill in responses if skill.get("source") == source]
+    return paginate(responses, limit=limit, page=page)
 
 
 @router.get("/{skill_id}")
@@ -63,7 +72,7 @@ async def retrieve_skill(skill_id: str, db: AsyncSession = Depends(get_session))
     skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return resource_to_response(skill, public_type="skill")
+    return _skill_response(skill)
 
 
 @router.delete("/{skill_id}")
@@ -73,7 +82,7 @@ async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Skill not found")
     await res_q.delete_resource(db, skill)
     await db.commit()
-    return deleted_response(skill, public_type="deleted_skill")
+    return {"id": skill.id, "type": "skill_deleted", "deleted": True}
 
 
 @router.post("/{skill_id}/versions", status_code=201)
@@ -92,20 +101,22 @@ async def create_skill_version(
     skill_data["latest_version"] = version_number
     await res_q.update_resource(db, skill, data=skill_data)
     await db.commit()
-    return resource_to_response(version, public_type="skill_version")
+    return _skill_version_response(version)
 
 
 @router.get("/{skill_id}/versions")
 async def list_skill_versions(
     skill_id: str,
     limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
-    versions = await res_q.list_resources(db, resource_type="skill_version", parent_id=skill_id, limit=limit)
-    return ListResponse[dict].from_items([resource_to_response(v, public_type="skill_version") for v in versions])
+    versions = await res_q.list_resources(db, resource_type="skill_version", parent_id=skill_id, limit=1000)
+    versions = sort_by_created_at(versions, order="desc")
+    return paginate([_skill_version_response(v) for v in versions], limit=limit, page=page)
 
 
 @router.get("/{skill_id}/versions/{version}")
@@ -122,7 +133,7 @@ async def retrieve_skill_version(
     )
     if skill_version is None:
         raise HTTPException(status_code=404, detail="Skill version not found")
-    return resource_to_response(skill_version, public_type="skill_version")
+    return _skill_version_response(skill_version)
 
 
 @router.delete("/{skill_id}/versions/{version}")
@@ -137,7 +148,7 @@ async def delete_skill_version(skill_id: str, version: int, db: AsyncSession = D
         raise HTTPException(status_code=404, detail="Skill version not found")
     await res_q.delete_resource(db, skill_version)
     await db.commit()
-    return deleted_response(skill_version, public_type="deleted_skill_version")
+    return {"id": str(skill_version.version), "type": "skill_version_deleted", "deleted": True}
 
 
 @router.get("/{skill_id}/versions/{version}/content")
@@ -205,6 +216,26 @@ async def _create_skill_version_resource(
         size_bytes=stored.size_bytes,
         sha256=stored.sha256 or sha256,
     )
+
+
+def _skill_response(skill) -> dict[str, Any]:
+    response = resource_to_response(skill, public_type="skill")
+    latest_version = response.get("latest_version")
+    response["latest_version"] = str(latest_version) if latest_version is not None else None
+    response["source"] = response.get("source") or "custom"
+    response["display_title"] = response.get("display_title")
+    return response
+
+
+def _skill_version_response(skill_version) -> dict[str, Any]:
+    response = resource_to_response(skill_version, public_type="skill_version")
+    version = response.get("version")
+    response["version"] = str(version) if version is not None else ""
+    response["skill_id"] = skill_version.parent_id
+    response["directory"] = response.get("directory") or response.get("top_level_directory") or ""
+    response["name"] = response.get("name") or ""
+    response["description"] = response.get("description") or ""
+    return response
 
 
 async def _skill_payload_from_request(request: Request) -> tuple[dict[str, Any], bytes]:

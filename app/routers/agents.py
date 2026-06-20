@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent_contract import validate_mcp_bindings
@@ -9,11 +11,11 @@ from app.models.agents import (
     AgentCreateRequest,
     AgentResponse,
     AgentUpdateRequest,
-    AgentVersionResponse,
     agent_to_response,
-    version_to_response,
+    version_to_agent_response,
 )
 from app.models.common import ListResponse
+from app.pagination import filter_created_at, paginate, sort_by_created_at
 
 router = APIRouter(
     prefix="/v1/agents",
@@ -49,28 +51,36 @@ async def create_agent(
 @router.get("", response_model=ListResponse[AgentResponse])
 async def list_agents(
     limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
-    agents = await agents_q.list_agents(db, limit=limit)
+    agents = await agents_q.list_agents(db, limit=1000, include_archived=include_archived)
+    agents = filter_created_at(agents, created_at_gte=created_at_gte, created_at_lte=created_at_lte)
+    agents = sort_by_created_at(agents, order="desc")
     responses: list[AgentResponse] = []
     for agent in agents:
         version = await agents_q.get_active_agent_version(db, agent)
         if version is not None:
             responses.append(agent_to_response(agent, version))
-    return ListResponse[AgentResponse].from_items(responses)
+    return paginate(responses, limit=limit, page=page)
 
 
-@router.get("/{agent_id}/versions", response_model=ListResponse[AgentVersionResponse])
+@router.get("/{agent_id}/versions", response_model=ListResponse[AgentResponse])
 async def list_agent_versions(
     agent_id: str,
+    limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     agent = await agents_q.get_agent(db, agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     result = await db.execute(agents_q.agent_versions_query(agent_id))
-    versions = [version_to_response(v) for v in result.scalars().all()]
-    return ListResponse[AgentVersionResponse].from_items(versions)
+    versions = [version_to_agent_response(agent, v) for v in result.scalars().all()]
+    return paginate(versions, limit=limit, page=page)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)

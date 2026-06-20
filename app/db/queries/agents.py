@@ -72,15 +72,18 @@ async def get_agent(db: AsyncSession, agent_id: str) -> Agent | None:
     return result.scalar_one_or_none()
 
 
-async def list_agents(db: AsyncSession, *, limit: int = 50) -> list[Agent]:
+async def list_agents(db: AsyncSession, *, limit: int = 50, include_archived: bool = False) -> list[Agent]:
     workspace_id = workspace_id_or_default()
-    result = await db.execute(
+    stmt = (
         select(Agent)
         .options(selectinload(Agent.versions))
-        .where(Agent.archived_at.is_(None), Agent.workspace_id == workspace_id)
+        .where(Agent.workspace_id == workspace_id)
         .order_by(Agent.created_at.desc())
         .limit(limit)
     )
+    if not include_archived:
+        stmt = stmt.where(Agent.archived_at.is_(None))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 

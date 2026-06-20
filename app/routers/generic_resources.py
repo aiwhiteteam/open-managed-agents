@@ -1,3 +1,5 @@
+import hashlib
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,6 +14,7 @@ from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
+from app.pagination import filter_created_at, paginate, sort_by_created_at
 
 router = APIRouter(tags=["managed resources"], dependencies=[Depends(require_api_access)])
 
@@ -27,12 +30,17 @@ RESOURCE_CONFIG = {
 
 @router.post("/v1/vaults", status_code=201)
 async def create_vault(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "vault", body.model_dump(mode="json"))
+    return await _create_top_level(db, "vault", _normalize_vault_data(body.model_dump(mode="json")))
 
 
 @router.get("/v1/vaults")
-async def list_vaults(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    return await _list_top_level(db, "vault", limit)
+async def list_vaults(
+    limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_session),
+):
+    return await _list_top_level(db, "vault", limit, page=page, include_archived=include_archived)
 
 
 @router.get("/v1/vaults/{vault_id}")
@@ -42,12 +50,12 @@ async def retrieve_vault(vault_id: str, db: AsyncSession = Depends(get_session))
 
 @router.post("/v1/vaults/{vault_id}")
 async def update_vault(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, vault_id, "vault", body.model_dump(mode="json"))
+    return await _update(db, vault_id, "vault", _normalize_vault_data(body.model_dump(mode="json")))
 
 
 @router.delete("/v1/vaults/{vault_id}")
 async def delete_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
-    return await _delete(db, vault_id, "vault", "deleted_vault")
+    return await _delete(db, vault_id, "vault", "vault_deleted")
 
 
 @router.post("/v1/vaults/{vault_id}/archive")
@@ -58,13 +66,19 @@ async def archive_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
 @router.post("/v1/vaults/{vault_id}/credentials", status_code=201)
 async def create_credential(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
     await _must_exist(db, vault_id, "vault")
-    return await _create_child(db, "credential", vault_id, body.model_dump(mode="json"))
+    return await _create_child(db, "credential", vault_id, _normalize_credential_data(body.model_dump(mode="json")))
 
 
 @router.get("/v1/vaults/{vault_id}/credentials")
-async def list_credentials(vault_id: str, limit: int = 50, db: AsyncSession = Depends(get_session)):
+async def list_credentials(
+    vault_id: str,
+    limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    db: AsyncSession = Depends(get_session),
+):
     await _must_exist(db, vault_id, "vault")
-    return await _list_child(db, "credential", vault_id, limit)
+    return await _list_child(db, "credential", vault_id, limit, page=page, include_archived=include_archived)
 
 
 @router.get("/v1/vaults/{vault_id}/credentials/{credential_id}")
@@ -79,12 +93,18 @@ async def update_credential(
     body: GenericBody,
     db: AsyncSession = Depends(get_session),
 ):
-    return await _update(db, credential_id, "credential", body.model_dump(mode="json"), parent_id=vault_id)
+    return await _update(
+        db,
+        credential_id,
+        "credential",
+        _normalize_credential_data(body.model_dump(mode="json")),
+        parent_id=vault_id,
+    )
 
 
 @router.delete("/v1/vaults/{vault_id}/credentials/{credential_id}")
 async def delete_credential(vault_id: str, credential_id: str, db: AsyncSession = Depends(get_session)):
-    return await _delete(db, credential_id, "credential", "deleted_credential", parent_id=vault_id)
+    return await _delete(db, credential_id, "credential", "vault_credential_deleted", parent_id=vault_id)
 
 
 @router.post("/v1/vaults/{vault_id}/credentials/{credential_id}/archive")
@@ -95,23 +115,42 @@ async def archive_credential(vault_id: str, credential_id: str, db: AsyncSession
 @router.post("/v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate")
 async def validate_credential(vault_id: str, credential_id: str, db: AsyncSession = Depends(get_session)):
     credential = await _must_exist(db, credential_id, "credential", parent_id=vault_id)
+    auth = credential.data.get("auth") or {}
     return {
-        "id": f"validation_{credential.id}",
-        "type": "credential_validation",
+        "type": "vault_credential_validation",
+        "vault_id": vault_id,
         "credential_id": credential.id,
-        "status": "not_validated",
-        "message": "OAuth validation is not implemented in the local compatibility runtime.",
+        "status": "unknown",
+        "has_refresh_token": bool(auth.get("refresh")),
+        "mcp_probe": None,
+        "refresh": None,
+        "validated_at": utcnow(),
     }
 
 
 @router.post("/v1/memory_stores", status_code=201)
 async def create_memory_store(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "memory_store", body.model_dump(mode="json"))
+    return await _create_top_level(db, "memory_store", _normalize_memory_store_data(body.model_dump(mode="json")))
 
 
 @router.get("/v1/memory_stores")
-async def list_memory_stores(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    return await _list_top_level(db, "memory_store", limit)
+async def list_memory_stores(
+    limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
+    db: AsyncSession = Depends(get_session),
+):
+    return await _list_top_level(
+        db,
+        "memory_store",
+        limit,
+        page=page,
+        include_archived=include_archived,
+        created_at_gte=created_at_gte,
+        created_at_lte=created_at_lte,
+    )
 
 
 @router.get("/v1/memory_stores/{memory_store_id}")
@@ -121,12 +160,17 @@ async def retrieve_memory_store(memory_store_id: str, db: AsyncSession = Depends
 
 @router.post("/v1/memory_stores/{memory_store_id}")
 async def update_memory_store(memory_store_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, memory_store_id, "memory_store", body.model_dump(mode="json"))
+    return await _update(
+        db,
+        memory_store_id,
+        "memory_store",
+        _normalize_memory_store_data(body.model_dump(mode="json")),
+    )
 
 
 @router.delete("/v1/memory_stores/{memory_store_id}")
 async def delete_memory_store(memory_store_id: str, db: AsyncSession = Depends(get_session)):
-    return await _delete(db, memory_store_id, "memory_store", "deleted_memory_store")
+    return await _delete(db, memory_store_id, "memory_store", "memory_store_deleted")
 
 
 @router.post("/v1/memory_stores/{memory_store_id}/archive")
@@ -135,7 +179,12 @@ async def archive_memory_store(memory_store_id: str, db: AsyncSession = Depends(
 
 
 @router.post("/v1/memory_stores/{memory_store_id}/memories", status_code=201)
-async def create_memory(memory_store_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
+async def create_memory(
+    memory_store_id: str,
+    body: GenericBody,
+    view: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
     await _must_exist(db, memory_store_id, "memory_store")
     data = _memory_payload(body.model_dump(mode="json"))
     existing = await _find_memory_by_path(db, memory_store_id, data["path_key"])
@@ -145,20 +194,26 @@ async def create_memory(memory_store_id: str, body: GenericBody, db: AsyncSessio
         db,
         resource_type="memory",
         parent_id=memory_store_id,
-        name=data.get("name") or data["path_key"],
+        name=data["path_key"],
         data=data,
     )
-    await _create_memory_version(db, memory, version=1, actor=data["updated_by"], operation="create")
+    version = await _create_memory_version(db, memory, version=1, actor=data["updated_by"], operation="created")
+    data["memory_version_id"] = version.id
+    await res_q.update_resource(db, memory, data=data, name=data["path_key"])
     await db.commit()
-    return resource_to_response(memory, public_type="memory")
+    return _resource_response(memory, view=view)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories")
 async def list_memories(
     memory_store_id: str,
     limit: int = 50,
+    page: str | None = None,
     path: str | None = None,
     path_prefix: str | None = None,
+    view: str | None = None,
+    order: str = "asc",
+    order_by: str = "path",
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_store_id, "memory_store")
@@ -173,27 +228,33 @@ async def list_memories(
             for memory in resources
             if memory.data.get("path_key") == prefix or str(memory.data.get("path_key", "")).startswith(f"{prefix}/")
         ]
-    return ListResponse[dict].from_items(
-        [resource_to_response(memory, public_type="memory") for memory in resources[:limit]]
-    )
+    resources = _sort_memories(resources, order=order, order_by=order_by)
+    return paginate([_resource_response(memory, view=view) for memory in resources], limit=limit, page=page)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories/by_path")
 async def retrieve_memory_by_path(
     memory_store_id: str,
     path: str = Query(...),
+    view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_store_id, "memory_store")
     memory = await _find_memory_by_path(db, memory_store_id, _path_key(_normalize_memory_path(path)))
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory not found")
-    return resource_to_response(memory, public_type="memory")
+    return _resource_response(memory, view=view)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
-async def retrieve_memory(memory_store_id: str, memory_id: str, db: AsyncSession = Depends(get_session)):
-    return await _retrieve(db, memory_id, "memory", parent_id=memory_store_id)
+async def retrieve_memory(
+    memory_store_id: str,
+    memory_id: str,
+    view: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
+    memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
+    return _resource_response(memory, view=view)
 
 
 @router.post("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
@@ -201,29 +262,43 @@ async def update_memory(
     memory_store_id: str,
     memory_id: str,
     body: GenericBody,
+    view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
     update = body.model_dump(mode="json")
     expected_version = update.pop("if_version", update.pop("expected_version", None))
+    precondition = update.pop("precondition", None)
     current_version = int(memory.data.get("version") or 1)
     if expected_version is not None and int(expected_version) != current_version:
         raise HTTPException(status_code=409, detail="Memory version precondition failed")
+    if isinstance(precondition, dict) and precondition.get("type") == "content_sha256":
+        expected_sha = precondition.get("content_sha256")
+        if expected_sha and expected_sha != memory.data.get("content_sha256"):
+            raise HTTPException(status_code=409, detail="Memory content precondition failed")
     data = _merge_memory_data(memory.data, update)
     if data["path_key"] != memory.data.get("path_key"):
         existing = await _find_memory_by_path(db, memory_store_id, data["path_key"])
         if existing is not None and existing.id != memory.id:
             raise HTTPException(status_code=409, detail="Memory path already exists in this memory store")
-    await res_q.update_resource(db, memory, data=data)
+    await res_q.update_resource(db, memory, data=data, name=data["path_key"])
     version = int(data["version"])
-    await _create_memory_version(db, memory, version=version, actor=data["updated_by"], operation="update")
+    version_resource = await _create_memory_version(
+        db,
+        memory,
+        version=version,
+        actor=data["updated_by"],
+        operation="modified",
+    )
+    data["memory_version_id"] = version_resource.id
+    await res_q.update_resource(db, memory, data=data, name=data["path_key"])
     await db.commit()
-    return resource_to_response(memory, public_type="memory")
+    return _resource_response(memory, view=view)
 
 
 @router.delete("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
 async def delete_memory(memory_store_id: str, memory_id: str, db: AsyncSession = Depends(get_session)):
-    return await _delete(db, memory_id, "memory", "deleted_memory", parent_id=memory_store_id)
+    return await _delete(db, memory_id, "memory", "memory_deleted", parent_id=memory_store_id)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions")
@@ -231,13 +306,12 @@ async def list_memory_versions_for_memory(
     memory_store_id: str,
     memory_id: str,
     limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
-    versions = await res_q.list_resources(db, resource_type="memory_version", parent_id=memory_id, limit=limit)
-    return ListResponse[dict].from_items(
-        [resource_to_response(version, public_type="memory_version") for version in versions]
-    )
+    versions = await res_q.list_resources(db, resource_type="memory_version", parent_id=memory_id, limit=1000)
+    return paginate([_resource_response(version) for version in versions], limit=limit, page=page)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions/{version}")
@@ -256,21 +330,34 @@ async def retrieve_memory_version_for_memory(
     )
     if memory_version is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
-    return resource_to_response(memory_version, public_type="memory_version")
+    return _resource_response(memory_version)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memory_versions")
-async def list_memory_versions(memory_store_id: str, limit: int = 50, db: AsyncSession = Depends(get_session)):
+async def list_memory_versions(
+    memory_store_id: str,
+    limit: int = 50,
+    page: str | None = None,
+    memory_id: str | None = None,
+    operation: str | None = None,
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
+    db: AsyncSession = Depends(get_session),
+):
     await _must_exist(db, memory_store_id, "memory_store")
     memories = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
     versions = []
     for memory in memories:
+        if memory_id is not None and memory.id != memory_id:
+            continue
         versions.extend(
-            await res_q.list_resources(db, resource_type="memory_version", parent_id=memory.id, limit=limit)
+            await res_q.list_resources(db, resource_type="memory_version", parent_id=memory.id, limit=1000)
         )
-    return ListResponse[dict].from_items(
-        [resource_to_response(v, public_type="memory_version") for v in versions[:limit]]
-    )
+    versions = filter_created_at(versions, created_at_gte=created_at_gte, created_at_lte=created_at_lte)
+    if operation is not None:
+        versions = [version for version in versions if _memory_version_operation(version.data.get("operation")) == operation]
+    versions = sort_by_created_at(versions, order="desc")
+    return paginate([_resource_response(v) for v in versions], limit=limit, page=page)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}")
@@ -283,7 +370,7 @@ async def retrieve_memory_version(
     version = await res_q.get_resource(db, resource_id=memory_version_id, resource_type="memory_version")
     if version is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
-    return resource_to_response(version, public_type="memory_version")
+    return _resource_response(version)
 
 
 @router.post("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact")
@@ -312,7 +399,7 @@ async def redact_memory_version(
         memory_data["redacted_at"] = data["redacted_at"]
         await res_q.update_resource(db, memory, data=memory_data)
     await db.commit()
-    return resource_to_response(version, public_type="memory_version")
+    return _resource_response(version)
 
 
 @router.post("/v1/deployments", status_code=201)
@@ -322,8 +409,25 @@ async def create_deployment(body: GenericBody, db: AsyncSession = Depends(get_se
 
 
 @router.get("/v1/deployments")
-async def list_deployments(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    return await _list_top_level(db, "deployment", limit)
+async def list_deployments(
+    limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    status: str | None = None,
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
+    db: AsyncSession = Depends(get_session),
+):
+    return await _list_top_level(
+        db,
+        "deployment",
+        limit,
+        page=page,
+        include_archived=include_archived,
+        status=status,
+        created_at_gte=created_at_gte,
+        created_at_lte=created_at_lte,
+    )
 
 
 @router.get("/v1/deployments/{deployment_id}")
@@ -343,7 +447,7 @@ async def update_deployment(deployment_id: str, body: GenericBody, db: AsyncSess
         status=data["status"],
     )
     await db.commit()
-    return resource_to_response(deployment, public_type="deployment")
+    return _resource_response(deployment)
 
 
 @router.post("/v1/deployments/{deployment_id}/archive")
@@ -358,7 +462,7 @@ async def pause_deployment(deployment_id: str, db: AsyncSession = Depends(get_se
     data["status"] = "paused"
     await res_q.update_resource(db, deployment, data=data, status="paused")
     await db.commit()
-    return resource_to_response(deployment, public_type="deployment")
+    return _resource_response(deployment)
 
 
 @router.post("/v1/deployments/{deployment_id}/unpause")
@@ -368,7 +472,7 @@ async def unpause_deployment(deployment_id: str, db: AsyncSession = Depends(get_
     data["status"] = "active"
     await res_q.update_resource(db, deployment, data=data, status="active")
     await db.commit()
-    return resource_to_response(deployment, public_type="deployment")
+    return _resource_response(deployment)
 
 
 @router.post("/v1/deployments/{deployment_id}/run")
@@ -381,6 +485,7 @@ async def run_deployment(
     if deployment.status == "paused" or deployment.data.get("status") == "paused":
         raise HTTPException(status_code=409, detail="Deployment is paused")
     run_input = body.model_dump(mode="json") if body is not None else {}
+    deployment_data = deployment.data or {}
     attempt = int(run_input.get("attempt") or 1)
     run = await res_q.create_resource(
         db,
@@ -389,9 +494,11 @@ async def run_deployment(
         status="queued",
         data={
             "deployment_id": deployment.id,
+            "agent": deployment_data.get("agent"),
             "status": "queued",
             "attempt": attempt,
             "trigger": run_input.get("trigger") or "manual",
+            "trigger_context": _trigger_context(run_input),
             "scheduled_for": run_input.get("scheduled_for"),
         },
     )
@@ -401,12 +508,35 @@ async def run_deployment(
         run_data["session_id"] = session.id
         await res_q.update_resource(db, run, data=run_data)
     await db.commit()
-    return resource_to_response(run, public_type="deployment_run")
+    return _resource_response(run)
 
 
 @router.get("/v1/deployment_runs")
-async def list_deployment_runs(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    return await _list_top_level(db, "deployment_run", limit)
+async def list_deployment_runs(
+    limit: int = 50,
+    page: str | None = None,
+    deployment_id: str | None = None,
+    has_error: bool | None = None,
+    trigger_type: str | None = None,
+    created_at_gt: datetime | None = Query(default=None, alias="created_at[gt]"),
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
+    db: AsyncSession = Depends(get_session),
+):
+    return await _list_top_level(
+        db,
+        "deployment_run",
+        limit,
+        page=page,
+        parent_id=deployment_id,
+        has_error=has_error,
+        trigger_type=trigger_type,
+        created_at_gt=created_at_gt,
+        created_at_gte=created_at_gte,
+        created_at_lt=created_at_lt,
+        created_at_lte=created_at_lte,
+    )
 
 
 @router.get("/v1/deployment_runs/{deployment_run_id}")
@@ -416,12 +546,17 @@ async def retrieve_deployment_run(deployment_run_id: str, db: AsyncSession = Dep
 
 @router.post("/v1/user_profiles", status_code=201)
 async def create_user_profile(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "user_profile", body.model_dump(mode="json"))
+    return await _create_top_level(db, "user_profile", _normalize_user_profile_data(body.model_dump(mode="json")))
 
 
 @router.get("/v1/user_profiles")
-async def list_user_profiles(limit: int = 50, db: AsyncSession = Depends(get_session)):
-    return await _list_top_level(db, "user_profile", limit)
+async def list_user_profiles(
+    limit: int = 50,
+    page: str | None = None,
+    order: str = "desc",
+    db: AsyncSession = Depends(get_session),
+):
+    return await _list_top_level(db, "user_profile", limit, page=page, order=order)
 
 
 @router.get("/v1/user_profiles/{user_profile_id}")
@@ -431,17 +566,21 @@ async def retrieve_user_profile(user_profile_id: str, db: AsyncSession = Depends
 
 @router.post("/v1/user_profiles/{user_profile_id}")
 async def update_user_profile(user_profile_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, user_profile_id, "user_profile", body.model_dump(mode="json"))
+    return await _update(
+        db,
+        user_profile_id,
+        "user_profile",
+        _normalize_user_profile_data(body.model_dump(mode="json")),
+    )
 
 
 @router.post("/v1/user_profiles/{user_profile_id}/enrollment_url")
 async def create_user_profile_enrollment_url(user_profile_id: str, db: AsyncSession = Depends(get_session)):
     profile = await _must_exist(db, user_profile_id, "user_profile")
     return {
-        "id": f"enroll_{profile.id}",
-        "type": "user_profile_enrollment_url",
-        "user_profile_id": profile.id,
+        "type": "enrollment_url",
         "url": f"https://example.invalid/managed-agents/user-profiles/{profile.id}/enroll",
+        "expires_at": utcnow() + timedelta(hours=1),
     }
 
 
@@ -452,6 +591,7 @@ async def _create_top_level(
     *,
     status: str = "active",
 ) -> dict[str, Any]:
+    data = _normalize_resource_data(resource_type, data)
     resource = await res_q.create_resource(
         db,
         resource_type=resource_type,
@@ -460,7 +600,7 @@ async def _create_top_level(
         status=status,
     )
     await db.commit()
-    return resource_to_response(resource, public_type=resource_type)
+    return _resource_response(resource)
 
 
 async def _create_child(
@@ -469,6 +609,7 @@ async def _create_child(
     parent_id: str,
     data: dict[str, Any],
 ) -> dict[str, Any]:
+    data = _normalize_resource_data(resource_type, data)
     resource = await res_q.create_resource(
         db,
         resource_type=resource_type,
@@ -477,17 +618,73 @@ async def _create_child(
         data=data,
     )
     await db.commit()
-    return resource_to_response(resource, public_type=resource_type)
+    return _resource_response(resource)
 
 
-async def _list_top_level(db: AsyncSession, resource_type: str, limit: int) -> ListResponse[dict]:
-    resources = await res_q.list_resources(db, resource_type=resource_type, limit=limit)
-    return ListResponse[dict].from_items([resource_to_response(r, public_type=resource_type) for r in resources])
+async def _list_top_level(
+    db: AsyncSession,
+    resource_type: str,
+    limit: int,
+    *,
+    page: str | None = None,
+    include_archived: bool = False,
+    parent_id: str | None = None,
+    status: str | None = None,
+    order: str = "desc",
+    has_error: bool | None = None,
+    trigger_type: str | None = None,
+    created_at_gt: datetime | None = None,
+    created_at_gte: datetime | None = None,
+    created_at_lt: datetime | None = None,
+    created_at_lte: datetime | None = None,
+) -> ListResponse[dict]:
+    resources = await res_q.list_resources(
+        db,
+        resource_type=resource_type,
+        parent_id=parent_id,
+        limit=1000,
+        include_archived=include_archived,
+    )
+    resources = filter_created_at(
+        resources,
+        created_at_gt=created_at_gt,
+        created_at_gte=created_at_gte,
+        created_at_lt=created_at_lt,
+        created_at_lte=created_at_lte,
+    )
+    if status is not None:
+        resources = [resource for resource in resources if resource.status == status or resource.data.get("status") == status]
+    if has_error is not None:
+        resources = [resource for resource in resources if bool(resource.data.get("error")) is has_error]
+    if trigger_type is not None:
+        resources = [
+            resource
+            for resource in resources
+            if (resource.data.get("trigger_context") or {}).get("type") == trigger_type
+            or resource.data.get("trigger") == trigger_type
+        ]
+    resources = sort_by_created_at(resources, order=order)
+    return paginate([_resource_response(r) for r in resources], limit=limit, page=page)
 
 
-async def _list_child(db: AsyncSession, resource_type: str, parent_id: str, limit: int) -> ListResponse[dict]:
-    resources = await res_q.list_resources(db, resource_type=resource_type, parent_id=parent_id, limit=limit)
-    return ListResponse[dict].from_items([resource_to_response(r, public_type=resource_type) for r in resources])
+async def _list_child(
+    db: AsyncSession,
+    resource_type: str,
+    parent_id: str,
+    limit: int,
+    *,
+    page: str | None = None,
+    include_archived: bool = False,
+) -> ListResponse[dict]:
+    resources = await res_q.list_resources(
+        db,
+        resource_type=resource_type,
+        parent_id=parent_id,
+        limit=1000,
+        include_archived=include_archived,
+    )
+    resources = sort_by_created_at(resources, order="desc")
+    return paginate([_resource_response(r) for r in resources], limit=limit, page=page)
 
 
 async def _retrieve(
@@ -498,7 +695,7 @@ async def _retrieve(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
-    return resource_to_response(resource, public_type=resource_type)
+    return _resource_response(resource)
 
 
 async def _update(
@@ -510,6 +707,7 @@ async def _update(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    data = _normalize_resource_data(resource_type, data)
     await res_q.update_resource(
         db,
         resource,
@@ -517,7 +715,7 @@ async def _update(
         name=data.get("name") or data.get("display_name") or data.get("display_title") or resource.name,
     )
     await db.commit()
-    return resource_to_response(resource, public_type=resource_type)
+    return _resource_response(resource)
 
 
 async def _archive(
@@ -530,7 +728,7 @@ async def _archive(
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
     await res_q.archive_resource(db, resource)
     await db.commit()
-    return resource_to_response(resource, public_type=resource_type)
+    return _resource_response(resource)
 
 
 async def _delete(
@@ -568,11 +766,159 @@ async def _must_exist(
 def _merge_data(existing: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
     merged = dict(existing or {})
     for key, value in update.items():
-        if value == "":
+        if key == "metadata" and isinstance(value, dict):
+            metadata = dict(merged.get("metadata") or {})
+            for metadata_key, metadata_value in value.items():
+                if metadata_value is None or metadata_value == "":
+                    metadata.pop(metadata_key, None)
+                else:
+                    metadata[metadata_key] = metadata_value
+            merged["metadata"] = metadata
+        elif value is None or value == "":
             merged.pop(key, None)
         else:
             merged[key] = value
     return merged
+
+
+def _normalize_resource_data(resource_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    if resource_type == "vault":
+        return _normalize_vault_data(data)
+    if resource_type == "credential":
+        return _normalize_credential_data(data)
+    if resource_type == "memory_store":
+        return _normalize_memory_store_data(data)
+    if resource_type == "deployment":
+        return _normalize_deployment_data(data)
+    if resource_type == "deployment_run":
+        return _normalize_deployment_run_data(data)
+    if resource_type == "user_profile":
+        return _normalize_user_profile_data(data)
+    return data
+
+
+def _resource_response(resource, *, view: str | None = None) -> dict[str, Any]:
+    if resource.resource_type == "vault":
+        return _vault_response(resource)
+    if resource.resource_type == "credential":
+        return _credential_response(resource)
+    if resource.resource_type == "memory_store":
+        return _memory_store_response(resource)
+    if resource.resource_type == "memory":
+        return _memory_response(resource, view=view)
+    if resource.resource_type == "memory_version":
+        return _memory_version_response(resource, view=view)
+    if resource.resource_type == "deployment":
+        return _deployment_response(resource)
+    if resource.resource_type == "deployment_run":
+        return _deployment_run_response(resource)
+    if resource.resource_type == "user_profile":
+        return _user_profile_response(resource)
+    return resource_to_response(resource, public_type=resource.resource_type)
+
+
+def _normalize_vault_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    display_name = normalized.get("display_name") or normalized.get("name")
+    if display_name is not None:
+        normalized["display_name"] = str(display_name)
+        normalized.setdefault("name", str(display_name))
+    normalized.setdefault("metadata", {})
+    return normalized
+
+
+def _vault_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="vault")
+    response["display_name"] = str(response.get("display_name") or response.get("name") or "")
+    response["metadata"] = dict(response.get("metadata") or {})
+    return response
+
+
+def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    display_name = normalized.get("display_name") or normalized.get("name")
+    if display_name is not None:
+        normalized["display_name"] = str(display_name)
+        normalized.setdefault("name", str(display_name))
+    if "auth" not in normalized:
+        auth_type = str(normalized.pop("type", "mcp_oauth"))
+        normalized["auth"] = _legacy_credential_auth(auth_type, normalized)
+    normalized.setdefault("metadata", {})
+    return normalized
+
+
+def _legacy_credential_auth(auth_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    if auth_type == "static_bearer":
+        return {
+            "type": "static_bearer",
+            "mcp_server_url": data.get("mcp_server_url") or "https://example.invalid/mcp",
+            "token": data.get("token") or data.get("api_key") or "",
+        }
+    if auth_type == "environment_variable":
+        return {
+            "type": "environment_variable",
+            "secret_name": data.get("secret_name") or data.get("name") or "SECRET",
+            "secret_value": data.get("secret_value") or "",
+            "networking": data.get("networking") or {"type": "unrestricted"},
+        }
+    return {
+        "type": "mcp_oauth",
+        "mcp_server_url": data.get("mcp_server_url") or "https://example.invalid/mcp",
+        "access_token": data.get("access_token") or "",
+        "expires_at": data.get("expires_at"),
+        "refresh": data.get("refresh"),
+    }
+
+
+def _credential_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="vault_credential")
+    response["vault_id"] = resource.parent_id
+    response["display_name"] = response.get("display_name") or response.get("name")
+    response["metadata"] = dict(response.get("metadata") or {})
+    response["auth"] = _credential_auth_response((resource.data or {}).get("auth") or {})
+    return response
+
+
+def _credential_auth_response(auth: dict[str, Any]) -> dict[str, Any]:
+    auth_type = str(auth.get("type") or "mcp_oauth")
+    if auth_type == "static_bearer":
+        return {
+            "type": "static_bearer",
+            "mcp_server_url": str(auth.get("mcp_server_url") or "https://example.invalid/mcp"),
+        }
+    if auth_type == "environment_variable":
+        return {
+            "type": "environment_variable",
+            "secret_name": str(auth.get("secret_name") or "SECRET"),
+            "networking": _credential_networking_response(auth.get("networking")),
+        }
+    response = {
+        "type": "mcp_oauth",
+        "mcp_server_url": str(auth.get("mcp_server_url") or "https://example.invalid/mcp"),
+        "expires_at": auth.get("expires_at"),
+        "refresh": auth.get("refresh"),
+    }
+    return {key: value for key, value in response.items() if value is not None}
+
+
+def _credential_networking_response(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict) and value.get("type") == "limited":
+        return {"type": "limited", "allowed_hosts": list(value.get("allowed_hosts") or [])}
+    return {"type": "unrestricted"}
+
+
+def _normalize_memory_store_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    normalized.setdefault("description", "")
+    normalized.setdefault("metadata", {})
+    return normalized
+
+
+def _memory_store_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="memory_store")
+    response["description"] = response.get("description") or ""
+    response["metadata"] = dict(response.get("metadata") or {})
+    return response
 
 
 def _memory_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -582,6 +928,8 @@ def _memory_payload(data: dict[str, Any]) -> dict[str, Any]:
     memory = dict(data)
     memory["path"] = path
     memory["path_key"] = _path_key(path)
+    memory["content"] = "" if memory.get("content") is None else str(memory.get("content"))
+    memory.update(_content_metadata(memory["content"]))
     memory["version"] = 1
     memory["created_by"] = actor
     memory["updated_by"] = actor
@@ -601,12 +949,16 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
         merged["path"] = path
         merged["path_key"] = _path_key(path)
     for key, value in update.items():
-        if key in {"path_key", "version", "created_at", "created_by"}:
+        if key in {"path_key", "version", "created_at", "created_by", "memory_version_id"}:
             continue
         if value == "":
             merged.pop(key, None)
         else:
             merged[key] = value
+    if "content" in update:
+        content = "" if merged.get("content") is None else str(merged.get("content"))
+        merged["content"] = content
+        merged.update(_content_metadata(content))
     merged["version"] = int(merged.get("version") or 1) + 1
     merged["updated_by"] = actor
     merged["updated_at"] = utcnow().isoformat()
@@ -615,11 +967,12 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
 
 
 async def _find_memory_by_path(db: AsyncSession, memory_store_id: str, path_key: str):
-    memories = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
-    for memory in memories:
-        if memory.data.get("path_key") == path_key:
-            return memory
-    return None
+    return await res_q.get_resource_by_name(
+        db,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        name=path_key,
+    )
 
 
 async def _create_memory_version(
@@ -630,7 +983,8 @@ async def _create_memory_version(
     actor: str,
     operation: str,
 ):
-    await res_q.create_resource(
+    snapshot = _memory_snapshot(memory.data)
+    return await res_q.create_resource(
         db,
         resource_type="memory_version",
         parent_id=memory.id,
@@ -641,8 +995,12 @@ async def _create_memory_version(
             "memory_version": version,
             "path": memory.data.get("path"),
             "path_key": memory.data.get("path_key"),
-            "snapshot": _memory_snapshot(memory.data),
+            "content": snapshot.get("content"),
+            "content_sha256": snapshot.get("content_sha256"),
+            "content_size_bytes": snapshot.get("content_size_bytes"),
+            "snapshot": snapshot,
             "actor": actor,
+            "created_by": _api_actor(actor),
             "operation": operation,
             "redacted": False,
         },
@@ -657,7 +1015,7 @@ def _memory_snapshot(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_memory_path(value: Any) -> list[str]:
+def _normalize_memory_path(value: Any) -> str:
     if value is None:
         raise HTTPException(status_code=422, detail="Memory path is required")
     if isinstance(value, str):
@@ -670,19 +1028,96 @@ def _normalize_memory_path(value: Any) -> list[str]:
         raise HTTPException(status_code=422, detail="Memory path cannot be empty")
     if any("/" in part for part in parts):
         raise HTTPException(status_code=422, detail="Memory path array items cannot contain '/'")
-    return parts
+    return "/" + "/".join(parts)
 
 
-def _path_key(path: list[str]) -> str:
-    return "/".join(path)
+def _path_key(path: str) -> str:
+    return path.strip("/")
+
+
+def _content_metadata(content: str) -> dict[str, Any]:
+    content_bytes = content.encode("utf-8")
+    return {
+        "content_sha256": hashlib.sha256(content_bytes).hexdigest(),
+        "content_size_bytes": len(content_bytes),
+    }
+
+
+def _memory_response(resource, *, view: str | None = None) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="memory")
+    content = response.get("content")
+    if content is None and not response.get("redacted"):
+        content = ""
+    response["memory_store_id"] = resource.parent_id
+    response["path"] = _normalize_memory_path(response.get("path"))
+    response["path_key"] = _path_key(response["path"])
+    if content is not None:
+        response.update(_content_metadata(str(content)))
+    response.setdefault("content_sha256", _content_metadata("")["content_sha256"])
+    response.setdefault("content_size_bytes", 0)
+    response["memory_version_id"] = str(response.get("memory_version_id") or "")
+    if view == "basic":
+        response["content"] = None
+    return response
+
+
+def _memory_version_response(resource, *, view: str | None = None) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="memory_version")
+    data = resource.data or {}
+    snapshot = dict(data.get("snapshot") or {})
+    redacted = bool(data.get("redacted") or data.get("redacted_at"))
+    response["memory_store_id"] = data.get("memory_store_id") or snapshot.get("memory_store_id")
+    response["memory_id"] = data.get("memory_id") or resource.parent_id
+    response["operation"] = _memory_version_operation(data.get("operation"))
+    response["created_by"] = data.get("created_by") or _api_actor(str(data.get("actor") or "api"))
+    response["redacted_at"] = data.get("redacted_at")
+    if redacted:
+        response["content"] = None
+        response["path"] = None
+        response["content_sha256"] = None
+        response["content_size_bytes"] = None
+    else:
+        content = data.get("content", snapshot.get("content"))
+        response["content"] = None if view == "basic" else content
+        response["path"] = _normalize_memory_path(data.get("path") or snapshot.get("path"))
+        response["content_sha256"] = data.get("content_sha256") or snapshot.get("content_sha256")
+        response["content_size_bytes"] = data.get("content_size_bytes") or snapshot.get("content_size_bytes")
+    return response
+
+
+def _memory_version_operation(value: Any) -> str:
+    if value in {"created", "modified", "deleted"}:
+        return str(value)
+    if value == "create":
+        return "created"
+    if value == "delete":
+        return "deleted"
+    return "modified"
+
+
+def _sort_memories(resources: list, *, order: str, order_by: str) -> list:
+    reverse = order == "desc"
+    if order_by == "created_at":
+        return sort_by_created_at(resources, order=order)
+    return sorted(resources, key=lambda resource: str(resource.data.get("path_key") or ""), reverse=reverse)
+
+
+def _api_actor(api_key_id: str) -> dict[str, str]:
+    return {"type": "api_actor", "api_key_id": api_key_id}
 
 
 def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     status = str(normalized.get("status") or "active")
-    if status not in {"active", "paused", "archived"}:
-        raise HTTPException(status_code=422, detail="Deployment status must be active, paused, or archived")
+    if status not in {"active", "paused"}:
+        raise HTTPException(status_code=422, detail="Deployment status must be active or paused")
     normalized["status"] = status
+    normalized["agent"] = _deployment_agent_response(normalized.get("agent"))
+    normalized.setdefault("environment_id", "")
+    normalized.setdefault("initial_events", [])
+    normalized.setdefault("resources", [])
+    normalized.setdefault("vault_ids", [])
+    normalized.setdefault("metadata", {})
 
     schedule = normalized.get("schedule")
     if schedule is not None:
@@ -691,9 +1126,9 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
         schedule_type = str(schedule.get("type") or "cron")
         if schedule_type != "cron":
             raise HTTPException(status_code=422, detail="Only cron deployment schedules are supported")
-        expression = str(schedule.get("cron") or schedule.get("expression") or "").strip()
+        expression = str(schedule.get("expression") or schedule.get("cron") or "").strip()
         if not _valid_cron_expression(expression):
-            raise HTTPException(status_code=422, detail="Deployment cron schedule must have 5 or 6 fields")
+            raise HTTPException(status_code=422, detail="Deployment cron schedule must have 5 fields")
         timezone = str(schedule.get("timezone") or "UTC")
         try:
             ZoneInfo(timezone)
@@ -702,6 +1137,7 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
         normalized["schedule"] = {
             **schedule,
             "type": "cron",
+            "expression": expression,
             "cron": expression,
             "timezone": timezone,
             "enabled": bool(schedule.get("enabled", True)),
@@ -711,7 +1147,92 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
 
 def _valid_cron_expression(expression: str) -> bool:
     parts = expression.split()
-    return len(parts) in {5, 6} and all(parts)
+    return len(parts) == 5 and all(parts)
+
+
+def _normalize_deployment_run_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    normalized["agent"] = _deployment_agent_response(normalized.get("agent"))
+    normalized.setdefault("trigger_context", _trigger_context(normalized))
+    normalized.setdefault("error", None)
+    return normalized
+
+
+def _deployment_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="deployment")
+    data = resource.data or {}
+    response["agent"] = _deployment_agent_response(data.get("agent"))
+    response["environment_id"] = str(data.get("environment_id") or "")
+    response["initial_events"] = list(data.get("initial_events") or [])
+    response["metadata"] = dict(data.get("metadata") or {})
+    response["resources"] = list(data.get("resources") or [])
+    response["vault_ids"] = list(data.get("vault_ids") or [])
+    response["description"] = data.get("description")
+    response["schedule"] = _deployment_schedule_response(data.get("schedule"))
+    response["status"] = "paused" if resource.status == "paused" or data.get("status") == "paused" else "active"
+    response["paused_reason"] = data.get("paused_reason")
+    return response
+
+
+def _deployment_run_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="deployment_run")
+    data = resource.data or {}
+    response["deployment_id"] = data.get("deployment_id") or resource.parent_id
+    response["agent"] = _deployment_agent_response(data.get("agent"))
+    response["session_id"] = data.get("session_id")
+    response["error"] = data.get("error")
+    response["trigger_context"] = data.get("trigger_context") or _trigger_context(data)
+    return response
+
+
+def _deployment_agent_response(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"type": "agent", "id": value, "version": 1}
+    if isinstance(value, dict):
+        agent_id = value.get("id") or value.get("agent_id") or ""
+        version = int(value.get("version") or 1)
+        return {"type": "agent", "id": str(agent_id), "version": version}
+    return {"type": "agent", "id": "", "version": 1}
+
+
+def _deployment_schedule_response(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    expression = str(value.get("expression") or value.get("cron") or "").strip()
+    if not expression:
+        return None
+    return {
+        "type": "cron",
+        "expression": expression,
+        "cron": expression,
+        "timezone": str(value.get("timezone") or "UTC"),
+        "enabled": bool(value.get("enabled", True)),
+        "last_run_at": value.get("last_run_at"),
+        "upcoming_runs_at": list(value.get("upcoming_runs_at") or []),
+    }
+
+
+def _trigger_context(value: dict[str, Any]) -> dict[str, Any]:
+    trigger = value.get("trigger") or value.get("trigger_type") or "manual"
+    if trigger == "schedule":
+        return {"type": "schedule", "scheduled_at": value.get("scheduled_for") or utcnow()}
+    return {"type": "manual"}
+
+
+def _normalize_user_profile_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(data)
+    normalized.setdefault("relationship", "external")
+    normalized.setdefault("metadata", {})
+    normalized.setdefault("trust_grants", {})
+    return normalized
+
+
+def _user_profile_response(resource) -> dict[str, Any]:
+    response = resource_to_response(resource, public_type="user_profile")
+    response["relationship"] = response.get("relationship") or "external"
+    response["metadata"] = dict(response.get("metadata") or {})
+    response["trust_grants"] = dict(response.get("trust_grants") or {})
+    return response
 
 
 async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, run_input: dict[str, Any]):

@@ -19,12 +19,19 @@ class ListResponse(ApiModel, Generic[T]):
     has_more: bool = False
     first_id: str | None = None
     last_id: str | None = None
+    next_page: str | None = None
 
     @classmethod
-    def from_items(cls, items: list[T]) -> "ListResponse[T]":
+    def from_items(
+        cls,
+        items: list[T],
+        *,
+        has_more: bool = False,
+        next_page: str | None = None,
+    ) -> "ListResponse[T]":
         first_id = _item_id(items[0]) if items else None
         last_id = _item_id(items[-1]) if items else None
-        return cls(data=items, has_more=False, first_id=first_id, last_id=last_id)
+        return cls(data=items, has_more=has_more, first_id=first_id, last_id=last_id, next_page=next_page)
 
 
 class MetadataModel(ApiModel):

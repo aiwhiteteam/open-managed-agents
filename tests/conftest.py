@@ -25,7 +25,6 @@ async def test_database(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setenv("OMA_RUNTIME_BACKEND", "local")
-    monkeypatch.setenv("OMA_STORAGE_BACKEND", "s3")
     monkeypatch.setenv("S3_ENDPOINT_URL", "https://storage.example.com")
     monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-key")
     monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret")

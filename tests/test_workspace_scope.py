@@ -44,6 +44,133 @@ async def test_api_keys_scope_resources_to_workspaces(client, monkeypatch):
     assert response.status_code == 201, response.text
 
 
+async def test_single_api_key_authorizes_bearer_token(client, monkeypatch):
+    monkeypatch.setenv("OMA_API_KEY", "single-key")
+    get_settings.cache_clear()
+
+    response = await client.post(
+        "/v1/agents",
+        headers={**TEST_HEADERS, "authorization": "Bearer single-key"},
+        json={"name": "Single Key Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+
+    response = await client.get(
+        "/v1/agents",
+        headers={**TEST_HEADERS, "authorization": "Bearer wrong-key"},
+    )
+    assert response.status_code == 401
+
+
+async def test_api_keys_scope_generic_resource_families_to_workspaces(client, monkeypatch):
+    monkeypatch.setenv("OMA_API_KEYS", "key-a,key-b")
+    monkeypatch.setenv("OMA_API_KEY_WORKSPACES", '{"key-a":"ws_a","key-b":"ws_b"}')
+    get_settings.cache_clear()
+
+    headers_a = {**TEST_HEADERS, "x-api-key": "key-a"}
+    headers_b = {**TEST_HEADERS, "x-api-key": "key-b"}
+
+    response = await client.post("/v1/vaults", headers=headers_a, json={"display_name": "Scoped Vault"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=headers_a,
+        json={
+            "display_name": "Scoped Credential",
+            "auth": {
+                "type": "static_bearer",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "token": "secret",
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    response = await client.post("/v1/memory_stores", headers=headers_a, json={"name": "Scoped Memory"})
+    assert response.status_code == 201, response.text
+    memory_store = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{memory_store['id']}/memories",
+        headers=headers_a,
+        json={"path": "/private/note.md", "content": "workspace scoped"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=headers_a,
+        json={"relationship": "external", "external_id": "scoped-user"},
+    )
+    assert response.status_code == 201, response.text
+    user_profile = response.json()
+
+    response = await client.post(
+        "/v1/skills",
+        headers=headers_a,
+        data={"display_title": "Scoped Skill"},
+        files={
+            "files": (
+                "skill/SKILL.md",
+                b"---\nname: scoped\ndescription: Scoped skill.\n---\nUse it.",
+                "text/markdown",
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    skill = response.json()
+
+    response = await client.post(
+        "/v1/files",
+        headers=headers_a,
+        files={"file": ("scoped.txt", b"scoped", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    file = response.json()
+
+    response = await client.get("/v1/vaults", headers=headers_b)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+    for path in [
+        f"/v1/vaults/{vault['id']}",
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}",
+        f"/v1/memory_stores/{memory_store['id']}",
+        f"/v1/memory_stores/{memory_store['id']}/memories/{memory['id']}",
+        f"/v1/user_profiles/{user_profile['id']}",
+        f"/v1/skills/{skill['id']}",
+        f"/v1/files/{file['id']}",
+    ]:
+        response = await client.get(path, headers=headers_b)
+        assert response.status_code == 404, f"{path}: {response.text}"
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=headers_b,
+        json={
+            "display_name": "Cross Workspace Credential",
+            "auth": {
+                "type": "static_bearer",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "token": "secret",
+            },
+        },
+    )
+    assert response.status_code == 404
+
+    response = await client.get("/v1/skills", headers=headers_b)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+    response = await client.get("/v1/files", headers=headers_b)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
 async def test_create_app_accepts_hosted_auth_provider(monkeypatch):
     class HostedAuthProvider:
         async def authenticate(self, request, credentials):
@@ -51,6 +178,7 @@ async def test_create_app_accepts_hosted_auth_provider(monkeypatch):
 
     assert isinstance(HostedAuthProvider(), AuthProvider)
 
+    monkeypatch.delenv("OMA_API_KEY", raising=False)
     monkeypatch.delenv("OMA_API_KEYS", raising=False)
     get_settings.cache_clear()
 

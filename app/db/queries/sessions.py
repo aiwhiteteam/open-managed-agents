@@ -17,6 +17,7 @@ async def create_session(
     environment: Environment,
     title: str | None = None,
     metadata: dict[str, Any] | None = None,
+    resources: list[dict[str, Any]] | None = None,
     vault_ids: list[str] | None = None,
     workspace_id: str | None = None,
 ) -> ManagedSession:
@@ -30,7 +31,10 @@ async def create_session(
         title=title,
         status="idle",
         metadata_=metadata or {},
-        status_details={"vault_ids": vault_ids or []},
+        status_details={
+            "resources": resources or [],
+            "vault_ids": vault_ids or [],
+        },
         last_event_seq=0,
     )
     db.add(session)
@@ -57,9 +61,10 @@ async def list_sessions(
     db: AsyncSession,
     *,
     limit: int = 50,
+    include_archived: bool = False,
     workspace_id: str | None = None,
 ) -> list[ManagedSession]:
-    result = await db.execute(
+    stmt = (
         select(ManagedSession)
         .where(
             ManagedSession.deleted_at.is_(None),
@@ -68,6 +73,9 @@ async def list_sessions(
         .order_by(ManagedSession.created_at.desc())
         .limit(limit)
     )
+    if not include_archived:
+        stmt = stmt.where(ManagedSession.archived_at.is_(None))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 

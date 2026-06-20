@@ -72,7 +72,7 @@ async def test_skill_create_version_and_download(client):
     assert response.status_code == 201, response.text
     skill = response.json()
     assert skill["type"] == "skill"
-    assert skill["latest_version"] == 1
+    assert skill["latest_version"] == "1"
 
     response = await client.post(
         f"/v1/skills/{skill['id']}/versions",
@@ -86,7 +86,7 @@ async def test_skill_create_version_and_download(client):
         },
     )
     assert response.status_code == 201, response.text
-    assert response.json()["version"] == 2
+    assert response.json()["version"] == "2"
 
     response = await client.get(f"/v1/skills/{skill['id']}/versions/2/content", headers=TEST_HEADERS)
     assert response.status_code == 200
@@ -109,7 +109,8 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     )
     assert response.status_code == 201, response.text
     credential = response.json()
-    assert credential["type"] == "credential"
+    assert credential["type"] == "vault_credential"
+    assert credential["vault_id"] == vault["id"]
 
     response = await client.post(
         "/v1/memory_stores",
@@ -127,6 +128,8 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     assert response.status_code == 201, response.text
     memory = response.json()
     assert memory["type"] == "memory"
+    assert memory["path"] == "/customers/acme"
+    assert memory["content_sha256"]
 
     response = await client.post(
         "/v1/deployments",

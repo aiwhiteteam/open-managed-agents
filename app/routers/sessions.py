@@ -1,7 +1,10 @@
 import asyncio
+from datetime import datetime, timezone
+import re
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +17,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
-from app.models.common import ListResponse
+from app.models.common import ListResponse, utcnow
 from app.models.events import (
     SendEventsRequest,
     SendEventsResponse,
@@ -29,7 +32,8 @@ from app.models.sessions import (
     SessionUpdateRequest,
     session_to_response,
 )
-from app.models.resources import GenericBody, deleted_response, resource_to_response
+from app.models.resources import GenericBody, resource_to_response
+from app.pagination import filter_created_at, paginate, sort_by_created_at
 from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
 from app.session_state import (
     ACTIVE_STATUSES,
@@ -76,25 +80,53 @@ async def create_session(
         environment=environment,
         title=body.title,
         metadata=body.metadata,
+        resources=[],
         vault_ids=body.vault_ids,
     )
+    for resource_data in body.resources:
+        await _create_session_resource(db, session, resource_data, allowed_types={"file", "github_repository", "memory_store"})
     await events_q.append_event(
         db,
         session,
         event_type="session.status_idle",
-        payload={"type": "session.status_idle", "status": "idle", "stop_reason": {"type": "session_created"}},
+        payload={"type": "session.status_idle", "status": "idle", "stop_reason": {"type": "end_turn"}},
     )
     await db.commit()
-    return session_to_response(session)
+    return await _session_response(db, session)
 
 
 @router.get("", response_model=ListResponse[SessionResponse])
 async def list_sessions(
     limit: int = 50,
+    page: str | None = None,
+    include_archived: bool = False,
+    order: str = "desc",
+    memory_store_id: str | None = None,
+    created_at_gt: datetime | None = Query(default=None, alias="created_at[gt]"),
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
-    sessions = await sessions_q.list_sessions(db, limit=limit)
-    return ListResponse[SessionResponse].from_items([session_to_response(s) for s in sessions])
+    sessions = await sessions_q.list_sessions(db, limit=1000, include_archived=include_archived)
+    sessions = filter_created_at(
+        sessions,
+        created_at_gt=created_at_gt,
+        created_at_gte=created_at_gte,
+        created_at_lt=created_at_lt,
+        created_at_lte=created_at_lte,
+    )
+    if memory_store_id is not None:
+        filtered_sessions = []
+        for session in sessions:
+            if await _session_has_memory_store(db, session, memory_store_id):
+                filtered_sessions.append(session)
+        sessions = filtered_sessions
+    sessions = sort_by_created_at(sessions, order=order)
+    responses = []
+    for session in sessions:
+        responses.append(await _session_response(db, session))
+    return paginate(responses, limit=limit, page=page)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -105,7 +137,7 @@ async def retrieve_session(
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session_to_response(session)
+    return await _session_response(db, session)
 
 
 @router.post("/{session_id}", response_model=SessionResponse)
@@ -120,6 +152,8 @@ async def update_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if blocks_mutation(session.status):
         raise HTTPException(status_code=409, detail=f"Cannot update a {session.status} session")
+    if body.vault_ids is not None:
+        raise HTTPException(status_code=422, detail="Session vault_ids updates are reserved and not supported")
 
     status_details = None
     if body.agent is not None:
@@ -131,17 +165,18 @@ async def update_session(
         db,
         session,
         title=body.title,
-        metadata=body.metadata,
+        metadata=_merge_metadata(session.metadata_, body.metadata) if body.metadata is not None else None,
         status_details=status_details,
     )
+    response = await _session_response(db, session)
     await events_q.append_event(
         db,
         session,
         event_type="session.updated",
-        payload={"type": "session.updated", "session": session_to_response(session).model_dump(mode="json")},
+        payload={"type": "session.updated", "session": response.model_dump(mode="json")},
     )
     await db.commit()
-    return session_to_response(session)
+    return response
 
 
 @router.post("/{session_id}/archive", response_model=SessionResponse)
@@ -156,10 +191,10 @@ async def archive_session(
         raise HTTPException(status_code=409, detail=f"Cannot archive a {session.status} session")
     session = await sessions_q.archive_session(db, session)
     await db.commit()
-    return session_to_response(session)
+    return await _session_response(db, session)
 
 
-@router.delete("/{session_id}", status_code=204)
+@router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
     db: AsyncSession = Depends(get_session),
@@ -177,6 +212,7 @@ async def delete_session(
         payload={"type": "session.deleted"},
     )
     await db.commit()
+    return {"id": session.id, "type": "session_deleted", "deleted": True}
 
 
 @router.post("/{session_id}/cancel", response_model=SessionResponse)
@@ -196,7 +232,7 @@ async def cancel_session(
         payload={"type": "session.status_terminated", "status": "terminated", "stop_reason": stop_reason},
     )
     await db.commit()
-    return session_to_response(session)
+    return await _session_response(db, session)
 
 
 @router.post("/{session_id}/resume", response_model=SessionResponse)
@@ -221,7 +257,7 @@ async def resume_session(
     await db.commit()
     if should_execute_inline(environment.config):
         background_tasks.add_task(execute_work_item, work.id)
-    return session_to_response(session)
+    return await _session_response(db, session)
 
 
 @router.post("/{session_id}/events", response_model=SendEventsResponse)
@@ -298,13 +334,28 @@ async def list_session_events(
     session_id: str,
     after_seq: int = 0,
     limit: int = 100,
+    page: str | None = None,
+    order: str = "asc",
+    created_at_gt: datetime | None = Query(default=None, alias="created_at[gt]"),
+    created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
+    created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
+    created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
     session = await sessions_q.get_session(db, session_id)
     if session is None or session.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Session not found")
-    events = await events_q.list_events(db, session_id=session.id, after_seq=after_seq, limit=limit)
-    return ListResponse[SessionEventResponse].from_items([event_to_response(e) for e in events])
+    events = await events_q.list_events(db, session_id=session.id, after_seq=after_seq, limit=1000)
+    events = filter_created_at(
+        events,
+        created_at_gt=created_at_gt,
+        created_at_gte=created_at_gte,
+        created_at_lt=created_at_lt,
+        created_at_lte=created_at_lte,
+    )
+    if order == "desc":
+        events = list(reversed(events))
+    return paginate([event_to_response(e) for e in events], limit=limit, page=page)
 
 
 @router.get("/{session_id}/events/stream")
@@ -331,23 +382,18 @@ async def add_session_resource(
     body: GenericBody,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
     data = body.model_dump(mode="json")
-    resource = await res_q.create_resource(
-        db,
-        resource_type="session_resource",
-        parent_id=session_id,
-        name=data.get("name") or data.get("file_id") or data.get("resource_id"),
-        data=data,
-    )
+    resource = await _create_session_resource(db, session, data, allowed_types={"file"})
     await db.commit()
-    return resource_to_response(resource, public_type="session_resource")
+    return _session_resource_response(resource)
 
 
 @router.get("/{session_id}/resources")
 async def list_session_resources(
     session_id: str,
     limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_session(db, session_id)
@@ -355,11 +401,9 @@ async def list_session_resources(
         db,
         resource_type="session_resource",
         parent_id=session_id,
-        limit=limit,
+        limit=1000,
     )
-    return ListResponse[dict].from_items(
-        [resource_to_response(resource, public_type="session_resource") for resource in resources]
-    )
+    return paginate([_session_resource_response(resource) for resource in resources], limit=limit, page=page)
 
 
 @router.get("/{session_id}/resources/{resource_id}")
@@ -377,7 +421,7 @@ async def retrieve_session_resource(
     )
     if resource is None:
         raise HTTPException(status_code=404, detail="Session resource not found")
-    return resource_to_response(resource, public_type="session_resource")
+    return _session_resource_response(resource)
 
 
 @router.post("/{session_id}/resources/{resource_id}")
@@ -396,11 +440,10 @@ async def update_session_resource(
     )
     if resource is None:
         raise HTTPException(status_code=404, detail="Session resource not found")
-    data = dict(resource.data)
-    data.update(body.model_dump(mode="json"))
+    data = _rotate_session_resource_token(resource, body.model_dump(mode="json"))
     await res_q.update_resource(db, resource, data=data)
     await db.commit()
-    return resource_to_response(resource, public_type="session_resource")
+    return _session_resource_response(resource)
 
 
 @router.delete("/{session_id}/resources/{resource_id}")
@@ -420,25 +463,26 @@ async def delete_session_resource(
         raise HTTPException(status_code=404, detail="Session resource not found")
     await res_q.delete_resource(db, resource)
     await db.commit()
-    return deleted_response(resource, public_type="deleted_session_resource")
+    return {"id": resource.id, "type": "session_resource_deleted", "deleted": True}
 
 
 @router.get("/{session_id}/threads")
 async def list_session_threads(
     session_id: str,
     limit: int = 50,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
     threads = await res_q.list_resources(
         db,
         resource_type="session_thread",
         parent_id=session_id,
-        limit=limit,
+        limit=1000,
     )
-    return ListResponse[dict].from_items(
-        [resource_to_response(thread, public_type="session_thread") for thread in threads]
-    )
+    responses = [await _session_thread_response(db, session, thread) for thread in threads]
+    responses.insert(0, await _session_thread_response(db, session, None))
+    return paginate(responses, limit=limit, page=page)
 
 
 @router.get("/{session_id}/threads/{thread_id}")
@@ -447,7 +491,9 @@ async def retrieve_session_thread(
     thread_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
+    if thread_id == _primary_thread_id(session):
+        return await _session_thread_response(db, session, None)
     thread = await res_q.get_resource(
         db,
         resource_id=thread_id,
@@ -456,7 +502,7 @@ async def retrieve_session_thread(
     )
     if thread is None:
         raise HTTPException(status_code=404, detail="Session thread not found")
-    return resource_to_response(thread, public_type="session_thread")
+    return await _session_thread_response(db, session, thread)
 
 
 @router.post("/{session_id}/threads/{thread_id}/archive")
@@ -465,7 +511,9 @@ async def archive_session_thread(
     thread_id: str,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
+    if thread_id == _primary_thread_id(session):
+        return await _session_thread_response(db, session, None, archived=True)
     thread = await res_q.get_resource(
         db,
         resource_id=thread_id,
@@ -476,7 +524,7 @@ async def archive_session_thread(
         raise HTTPException(status_code=404, detail="Session thread not found")
     await res_q.archive_resource(db, thread)
     await db.commit()
-    return resource_to_response(thread, public_type="session_thread")
+    return await _session_thread_response(db, session, thread)
 
 
 @router.get("/{session_id}/threads/{thread_id}/events")
@@ -485,16 +533,17 @@ async def list_session_thread_events(
     thread_id: str,
     after_seq: int = 0,
     limit: int = 100,
+    page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_session(db, session_id)
-    events = await events_q.list_events(db, session_id=session_id, after_seq=after_seq, limit=limit)
+    events = await events_q.list_events(db, session_id=session_id, after_seq=after_seq, limit=1000)
     filtered = [
         event_to_response(event)
         for event in events
         if event.payload.get("thread_id") == thread_id or event.payload.get("thread", {}).get("id") == thread_id
     ]
-    return ListResponse[SessionEventResponse].from_items(filtered)
+    return paginate(filtered, limit=limit, page=page)
 
 
 @router.get("/{session_id}/threads/{thread_id}/stream")
@@ -622,6 +671,347 @@ async def _merge_session_agent_overlay(db: AsyncSession, session, update: dict[s
     validate_mcp_bindings(mcp_servers, tools)
     details["agent"] = overlay
     return details
+
+
+async def _session_response(db: AsyncSession, session) -> SessionResponse:
+    version = await agents_q.get_agent_version(
+        db,
+        agent_id=session.agent_id,
+        version=session.agent_version,
+        workspace_id=session.workspace_id,
+    )
+    agent = _session_agent_snapshot(version, session.status_details or {}) if version is not None else None
+    resources = await _session_resources_response(db, session)
+    return session_to_response(session, agent=agent, resources=resources)
+
+
+def _session_agent_snapshot(version, details: dict[str, Any]) -> dict[str, Any]:
+    overlay = dict(details.get("agent") or {})
+    return {
+        "id": version.agent_id,
+        "type": "agent",
+        "name": version.name,
+        "version": version.version,
+        "model": version.model,
+        "system": version.system,
+        "description": version.description,
+        "tools": overlay.get("tools", version.tools),
+        "mcp_servers": overlay.get("mcp_servers", version.mcp_servers),
+        "skills": version.skills,
+        "multiagent": version.multiagent,
+    }
+
+
+def _merge_metadata(current: dict, patch: dict) -> dict:
+    merged = dict(current or {})
+    for key, value in (patch or {}).items():
+        if value is None or value == "":
+            merged.pop(key, None)
+        else:
+            merged[key] = value
+    return merged
+
+
+async def _create_session_resource(
+    db: AsyncSession,
+    session,
+    data: dict[str, Any],
+    *,
+    allowed_types: set[str],
+):
+    normalized = await _normalize_session_resource_data(db, data, allowed_types=allowed_types, workspace_id=session.workspace_id)
+    return await res_q.create_resource(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        name=_session_resource_name(normalized),
+        data=normalized,
+        workspace_id=session.workspace_id,
+    )
+
+
+async def _normalize_session_resource_data(
+    db: AsyncSession,
+    data: dict[str, Any],
+    *,
+    allowed_types: set[str],
+    workspace_id: str,
+) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="Session resource must be an object")
+    resource_type = str(data.get("type") or "")
+    if resource_type not in allowed_types:
+        allowed = ", ".join(sorted(allowed_types))
+        raise HTTPException(status_code=422, detail=f"Session resource type must be one of: {allowed}")
+    if resource_type == "file":
+        return await _normalize_file_session_resource(db, data, workspace_id=workspace_id)
+    if resource_type == "github_repository":
+        return _normalize_github_session_resource(data)
+    if resource_type == "memory_store":
+        return await _normalize_memory_store_session_resource(db, data, workspace_id=workspace_id)
+    raise HTTPException(status_code=422, detail=f"Unsupported session resource type: {resource_type}")
+
+
+async def _normalize_file_session_resource(db: AsyncSession, data: dict[str, Any], *, workspace_id: str) -> dict[str, Any]:
+    file_id = str(data.get("file_id") or "")
+    if not file_id:
+        raise HTTPException(status_code=422, detail="file session resources require file_id")
+    file_resource = await res_q.get_resource(db, resource_id=file_id, resource_type="file", workspace_id=workspace_id)
+    if file_resource is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    mount_path = str(data.get("mount_path") or f"/mnt/session/uploads/{file_id}")
+    _validate_mount_path(mount_path)
+    return {
+        "type": "file",
+        "file_id": file_id,
+        "mount_path": mount_path,
+    }
+
+
+def _normalize_github_session_resource(data: dict[str, Any]) -> dict[str, Any]:
+    url = str(data.get("url") or "")
+    if not url:
+        raise HTTPException(status_code=422, detail="github_repository session resources require url")
+    token = str(data.get("authorization_token") or "")
+    if not token:
+        raise HTTPException(status_code=422, detail="github_repository session resources require authorization_token")
+    mount_path = str(data.get("mount_path") or _default_github_mount_path(url))
+    _validate_mount_path(mount_path)
+    normalized: dict[str, Any] = {
+        "type": "github_repository",
+        "url": url,
+        "mount_path": mount_path,
+        "authorization_token_present": True,
+        "authorization_token_updated_at": utcnow().isoformat(),
+    }
+    if data.get("checkout") is not None:
+        normalized["checkout"] = _normalize_github_checkout(data.get("checkout"))
+    return normalized
+
+
+async def _normalize_memory_store_session_resource(
+    db: AsyncSession,
+    data: dict[str, Any],
+    *,
+    workspace_id: str,
+) -> dict[str, Any]:
+    memory_store_id = str(data.get("memory_store_id") or "")
+    if not memory_store_id:
+        raise HTTPException(status_code=422, detail="memory_store session resources require memory_store_id")
+    store = await res_q.get_resource(db, resource_id=memory_store_id, resource_type="memory_store", workspace_id=workspace_id)
+    if store is None:
+        raise HTTPException(status_code=404, detail="Memory store not found")
+    access = str(data.get("access") or "read_write")
+    if access not in {"read_write", "read_only"}:
+        raise HTTPException(status_code=422, detail="memory_store access must be read_write or read_only")
+    store_data = dict(store.data or {})
+    name = str(store.name or store_data.get("name") or memory_store_id)
+    normalized: dict[str, Any] = {
+        "type": "memory_store",
+        "memory_store_id": memory_store_id,
+        "access": access,
+        "name": name,
+        "description": str(store_data.get("description") or ""),
+        "mount_path": _memory_store_mount_path(name, memory_store_id),
+    }
+    if data.get("instructions") is not None:
+        instructions = str(data.get("instructions") or "")
+        if len(instructions) > 4096:
+            raise HTTPException(status_code=422, detail="memory_store instructions must be 4096 characters or fewer")
+        normalized["instructions"] = instructions
+    return normalized
+
+
+def _rotate_session_resource_token(resource, data: dict[str, Any]) -> dict[str, Any]:
+    current = dict(resource.data or {})
+    if current.get("type") != "github_repository":
+        raise HTTPException(status_code=422, detail="Only github_repository session resources support token rotation")
+    token = str(data.get("authorization_token") or "")
+    if not token:
+        raise HTTPException(status_code=422, detail="authorization_token is required")
+    current["authorization_token_present"] = True
+    current["authorization_token_updated_at"] = utcnow().isoformat()
+    current.pop("authorization_token", None)
+    return current
+
+
+async def _session_resources_response(db: AsyncSession, session) -> list[dict[str, Any]]:
+    resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        limit=1000,
+        workspace_id=session.workspace_id,
+    )
+    if resources:
+        return [_session_resource_response(resource) for resource in resources]
+    return list((session.status_details or {}).get("resources") or [])
+
+
+async def _session_has_memory_store(db: AsyncSession, session, memory_store_id: str) -> bool:
+    resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        limit=1000,
+        workspace_id=session.workspace_id,
+    )
+    if any((resource.data or {}).get("memory_store_id") == memory_store_id for resource in resources):
+        return True
+    return any(
+        resource.get("memory_store_id") == memory_store_id
+        for resource in (session.status_details or {}).get("resources", [])
+        if isinstance(resource, dict)
+    )
+
+
+def _session_resource_response(resource) -> dict[str, Any]:
+    data = dict(resource.data or {})
+    if data.get("type") == "file" or data.get("file_id"):
+        file_id = str(data.get("file_id") or "")
+        return {
+            "id": resource.id,
+            "type": "file",
+            "file_id": file_id,
+            "mount_path": data.get("mount_path") or f"/mnt/session/uploads/{file_id}",
+            "created_at": resource.created_at,
+            "updated_at": resource.updated_at,
+        }
+    if data.get("type") == "github_repository":
+        response = {
+            "id": resource.id,
+            "type": "github_repository",
+            "url": str(data.get("url") or ""),
+            "mount_path": str(data.get("mount_path") or _default_github_mount_path(str(data.get("url") or ""))),
+            "created_at": resource.created_at,
+            "updated_at": resource.updated_at,
+        }
+        if data.get("checkout") is not None:
+            response["checkout"] = data["checkout"]
+        return response
+    if data.get("type") == "memory_store":
+        response = {
+            "id": resource.id,
+            "type": "memory_store",
+            "memory_store_id": str(data.get("memory_store_id") or ""),
+            "access": data.get("access") or "read_write",
+            "description": str(data.get("description") or ""),
+            "mount_path": data.get("mount_path"),
+            "name": data.get("name"),
+            "created_at": resource.created_at,
+            "updated_at": resource.updated_at,
+        }
+        if data.get("instructions") is not None:
+            response["instructions"] = data["instructions"]
+        return {key: value for key, value in response.items() if value is not None}
+    response = resource_to_response(resource, public_type="session_resource")
+    response.pop("authorization_token", None)
+    return response
+
+
+def _session_resource_name(data: dict[str, Any]) -> str | None:
+    if data.get("type") == "file":
+        return data.get("file_id")
+    if data.get("type") == "github_repository":
+        return _github_repo_name(str(data.get("url") or ""))
+    if data.get("type") == "memory_store":
+        return data.get("name") or data.get("memory_store_id")
+    return data.get("name")
+
+
+def _normalize_github_checkout(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="github_repository checkout must be an object")
+    checkout_type = str(value.get("type") or "")
+    if checkout_type == "branch":
+        name = str(value.get("name") or "")
+        if not name:
+            raise HTTPException(status_code=422, detail="branch checkout requires name")
+        return {"type": "branch", "name": name}
+    if checkout_type == "commit":
+        sha = str(value.get("sha") or "")
+        if not sha:
+            raise HTTPException(status_code=422, detail="commit checkout requires sha")
+        return {"type": "commit", "sha": sha}
+    raise HTTPException(status_code=422, detail="checkout type must be branch or commit")
+
+
+def _default_github_mount_path(url: str) -> str:
+    repo_name = _github_repo_name(url) or "repository"
+    return f"/workspace/{repo_name}"
+
+
+def _github_repo_name(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path or url
+    name = path.rstrip("/").split("/")[-1] or "repository"
+    if name.endswith(".git"):
+        name = name[:-4]
+    return _safe_mount_segment(name) or "repository"
+
+
+def _memory_store_mount_path(name: str, fallback: str) -> str:
+    segment = _safe_mount_segment(name) or _safe_mount_segment(fallback) or "memory"
+    return f"/mnt/memory/{segment}"
+
+
+def _safe_mount_segment(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-").lower()
+
+
+def _validate_mount_path(value: str) -> None:
+    if not value.startswith("/"):
+        raise HTTPException(status_code=422, detail="mount_path must be absolute")
+
+
+async def _session_thread_response(db: AsyncSession, session, thread, *, archived: bool = False) -> dict[str, Any]:
+    version = await agents_q.get_agent_version(
+        db,
+        agent_id=session.agent_id,
+        version=session.agent_version,
+        workspace_id=session.workspace_id,
+    )
+    data = dict(getattr(thread, "data", None) or {})
+    created_at = getattr(thread, "created_at", session.created_at)
+    updated_at = getattr(thread, "updated_at", session.updated_at)
+    archived_at = getattr(thread, "archived_at", None)
+    if archived and archived_at is None:
+        archived_at = datetime.now(timezone.utc)
+    status = data.get("status") or session.status
+    if status not in {"running", "idle", "rescheduling", "terminated"}:
+        status = "idle"
+    return {
+        "id": getattr(thread, "id", _primary_thread_id(session)),
+        "type": "session_thread",
+        "session_id": session.id,
+        "agent": data.get("agent") or (_session_thread_agent_snapshot(version) if version is not None else None),
+        "status": status,
+        "parent_thread_id": data.get("parent_thread_id"),
+        "stats": data.get("stats") or {},
+        "usage": data.get("usage") or {},
+        "archived_at": archived_at,
+        "created_at": created_at,
+        "updated_at": updated_at,
+    }
+
+
+def _session_thread_agent_snapshot(version) -> dict[str, Any]:
+    return {
+        "id": version.agent_id,
+        "type": "agent",
+        "name": version.name,
+        "version": version.version,
+        "model": version.model,
+        "system": version.system,
+        "description": version.description,
+        "tools": version.tools,
+        "mcp_servers": version.mcp_servers,
+        "skills": version.skills,
+    }
+
+
+def _primary_thread_id(session) -> str:
+    return f"thrd_{session.id}_primary"
 
 
 def _resolve_agent_ref(agent: str | AgentReference) -> tuple[str, int | None]:

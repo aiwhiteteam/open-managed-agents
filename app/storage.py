@@ -1,8 +1,7 @@
 """S3-compatible object storage.
 
 Relational state lives in Postgres/SQLite. Object bytes live in S3-compatible
-storage. Cloudflare R2 is supported through the same S3 path, with legacy R2_*
-settings kept as aliases.
+storage. Cloudflare R2 and similar providers are configured through S3_*.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ class ObjectStorageSettings:
     region: str
 
 
-OBJECT_STORAGE_BACKENDS = {"s3", "r2", "object_storage"}
+OBJECT_STORAGE_BACKENDS = {"s3"}
 
 
 def object_storage_configured() -> bool:
@@ -64,28 +63,8 @@ def is_object_storage_backend(value: str | None) -> bool:
 
 
 def should_store_in_object_storage() -> bool:
-    backend = get_settings().oma_storage_backend.lower()
-    if backend in OBJECT_STORAGE_BACKENDS:
-        if not object_storage_configured():
-            raise StorageConfigurationError(
-                f"OMA_STORAGE_BACKEND={backend} requires S3_* settings or legacy R2_* aliases"
-            )
-        return True
-    if backend == "auto":
-        if object_storage_configured():
-            return True
-        raise StorageConfigurationError("OMA_STORAGE_BACKEND=auto requires S3-compatible object storage settings")
-    raise StorageConfigurationError("OMA_STORAGE_BACKEND must be one of: auto, s3, r2, object_storage")
-
-
-def r2_configured() -> bool:
-    """Backward-compatible alias for older call sites."""
-    return object_storage_configured()
-
-
-def should_store_in_r2() -> bool:
-    """Backward-compatible alias for older call sites."""
-    return should_store_in_object_storage()
+    _require_object_storage()
+    return True
 
 
 def public_url_for_key(key: str) -> str:
@@ -112,32 +91,13 @@ def _object_storage_settings() -> ObjectStorageSettings | None:
             region=s.s3_region or "auto",
         )
 
-    if all(
-        [
-            s.r2_account_id,
-            s.r2_access_key_id,
-            s.r2_secret_access_key,
-            s.r2_files_bucket_name,
-            s.r2_files_url,
-        ]
-    ):
-        return ObjectStorageSettings(
-            backend="r2",
-            bucket_name=s.r2_files_bucket_name,
-            public_url=s.r2_files_url,
-            access_key_id=s.r2_access_key_id,
-            secret_access_key=s.r2_secret_access_key,
-            endpoint_url=f"https://{s.r2_account_id}.r2.cloudflarestorage.com",
-            region="auto",
-        )
-
     return None
 
 
 def _require_object_storage() -> ObjectStorageSettings:
     config = _object_storage_settings()
     if config is None:
-        raise StorageConfigurationError("S3-compatible object storage is not fully configured")
+        raise StorageConfigurationError("S3-compatible object storage requires S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET_NAME, and S3_PUBLIC_URL")
     return config
 
 
