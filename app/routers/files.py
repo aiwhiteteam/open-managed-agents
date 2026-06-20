@@ -61,17 +61,39 @@ async def upload_file(
     )
     mime_type = file.content_type or "application/octet-stream"
     sha256 = hashlib.sha256(content).hexdigest()
-    try:
-        should_store_in_object_storage()
-        stored = await save_file_bytes(
-            content,
-            mime_type,
-            namespace="oma",
-            filename=file.filename or "upload",
-            category="files",
-        )
-    except StorageConfigurationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    existing = await _find_deduplicated_file(db, sha256=sha256)
+    if existing is None:
+        try:
+            should_store_in_object_storage()
+            stored = await save_file_bytes(
+                content,
+                mime_type,
+                namespace="oma",
+                filename=file.filename or "upload",
+                category="files",
+            )
+        except StorageConfigurationError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        storage_backend = stored.backend
+        storage_key = stored.key
+        storage_url = stored.url
+        stored_size_bytes = stored.size_bytes
+        stored_sha256 = stored.sha256 or sha256
+        data = {
+            "filename": file.filename,
+            "mime_type": mime_type,
+        }
+    else:
+        storage_backend = existing.storage_backend
+        storage_key = existing.storage_key
+        storage_url = existing.storage_url
+        stored_size_bytes = existing.size_bytes
+        stored_sha256 = existing.sha256 or sha256
+        data = {
+            "filename": file.filename,
+            "mime_type": mime_type,
+            "deduplicated_from_file_id": existing.id,
+        }
 
     resource = await res_q.create_resource(
         db,
@@ -80,15 +102,12 @@ async def upload_file(
         filename=file.filename,
         content=None,
         content_type=mime_type,
-        data={
-            "filename": file.filename,
-            "mime_type": mime_type,
-        },
-        storage_backend=stored.backend,
-        storage_key=stored.key,
-        storage_url=stored.url,
-        size_bytes=stored.size_bytes,
-        sha256=stored.sha256 or sha256,
+        data=data,
+        storage_backend=storage_backend,
+        storage_key=storage_key,
+        storage_url=storage_url,
+        size_bytes=stored_size_bytes,
+        sha256=stored_sha256,
     )
     await db.commit()
     return resource_to_response(resource, public_type="file")
@@ -139,27 +158,43 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
             get_settings().oma_max_file_upload_bytes,
             label="File upload",
         )
-    permanent_key = object_key(
-        namespace="oma",
-        category="files",
-        filename=body.filename or body.key.split("/")[-1],
-        content_sha256=body.sha256,
-    )
-    await copy_file(body.key, permanent_key, content_type=mime_type)
+    filename = body.filename or body.key.split("/")[-1]
+    existing = await _find_deduplicated_file(db, sha256=body.sha256)
+    if existing is None:
+        permanent_key = object_key(
+            namespace="oma",
+            category="files",
+            filename=filename,
+            content_sha256=body.sha256,
+        )
+        await copy_file(body.key, permanent_key, content_type=mime_type)
+        storage_key = permanent_key
+        storage_url = public_url_for_key(permanent_key)
+        storage_backend = object_storage_backend_label()
+        data = {
+            "filename": filename,
+            "mime_type": mime_type,
+        }
+    else:
+        storage_key = existing.storage_key
+        storage_url = existing.storage_url
+        storage_backend = existing.storage_backend
+        data = {
+            "filename": filename,
+            "mime_type": mime_type,
+            "deduplicated_from_file_id": existing.id,
+        }
     await delete_stored_file(body.key)
     resource = await res_q.create_resource(
         db,
         resource_type="file",
-        name=body.filename or body.key.split("/")[-1],
-        filename=body.filename or body.key.split("/")[-1],
+        name=filename,
+        filename=filename,
         content_type=mime_type,
-        data={
-            "filename": body.filename or body.key.split("/")[-1],
-            "mime_type": mime_type,
-        },
-        storage_backend=object_storage_backend_label(),
-        storage_key=permanent_key,
-        storage_url=public_url_for_key(permanent_key),
+        data=data,
+        storage_backend=storage_backend,
+        storage_key=storage_key,
+        storage_url=storage_url,
         size_bytes=int(size_bytes) if size_bytes is not None else None,
         sha256=body.sha256,
     )
@@ -214,7 +249,14 @@ async def delete_file(file_id: str, db: AsyncSession = Depends(get_session)):
     if file is None:
         raise HTTPException(status_code=404, detail="File not found")
     if is_object_storage_backend(file.storage_backend) and file.storage_key:
-        await delete_stored_file(file.storage_key)
+        active_references = await res_q.count_resources_by_storage_key(
+            db,
+            resource_type="file",
+            storage_backend=file.storage_backend,
+            storage_key=file.storage_key,
+        )
+        if active_references <= 1:
+            await delete_stored_file(file.storage_key)
     await res_q.delete_resource(db, file)
     await db.commit()
     return deleted_response(file, public_type="file_deleted")
@@ -226,3 +268,14 @@ def _enforce_size_limit(size_bytes: int, max_bytes: int, *, label: str) -> None:
             status_code=413,
             detail=f"{label} exceeds maximum size of {max_bytes} bytes",
         )
+
+
+async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):
+    if not sha256:
+        return None
+    existing = await res_q.get_resource_by_sha256(db, resource_type="file", sha256=sha256)
+    if existing is None:
+        return None
+    if not (is_object_storage_backend(existing.storage_backend) and existing.storage_key):
+        return None
+    return existing

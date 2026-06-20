@@ -46,6 +46,40 @@ async def test_files_upload_download_delete(client):
     assert response.json()["deleted"] is True
 
 
+async def test_duplicate_file_uploads_share_object_until_last_reference_is_deleted(client):
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("first.txt", b"same bytes", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    first = response.json()
+
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("second.txt", b"same bytes", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    second = response.json()
+
+    assert second["deduplicated_from_file_id"] == first["id"]
+    assert second["storage"]["key"] == first["storage"]["key"]
+
+    response = await client.delete(f"/v1/files/{first['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/files/{second['id']}/content", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.content == b"same bytes"
+
+    response = await client.delete(f"/v1/files/{second['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/files/{second['id']}/content", headers=TEST_HEADERS)
+    assert response.status_code == 404
+
+
 async def test_file_upload_size_limit(client, monkeypatch):
     monkeypatch.setenv("OMA_MAX_FILE_UPLOAD_BYTES", "4")
     get_settings.cache_clear()

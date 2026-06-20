@@ -76,7 +76,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Files And Resources
 
-- Add content deduplication, malware/content scanning, and object storage lifecycle policies.
+- Add malware/content scanning and object storage lifecycle policies. File uploads now deduplicate by content hash within a workspace and keep shared objects until the last file reference is deleted.
 - Implement production filesystem mount semantics for the SDK-validated session resource union. Uploaded file resources now create session-scoped object-storage copies.
 - Keep session resource union coverage current if Anthropic adds resource kinds beyond `file`, `github_repository`, and `memory_store`.
 

@@ -115,6 +115,50 @@ async def get_resource_by_name(
     return result.scalar_one_or_none()
 
 
+async def get_resource_by_sha256(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    sha256: str,
+    include_deleted: bool = False,
+    workspace_id: str | None = None,
+) -> ManagedResource | None:
+    stmt = (
+        select(ManagedResource)
+        .where(
+            ManagedResource.resource_type == resource_type,
+            ManagedResource.sha256 == sha256,
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+        )
+        .order_by(ManagedResource.created_at.asc())
+    )
+    if not include_deleted:
+        stmt = stmt.where(ManagedResource.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    return result.scalars().first()
+
+
+async def count_resources_by_storage_key(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    storage_backend: str,
+    storage_key: str,
+    include_deleted: bool = False,
+    workspace_id: str | None = None,
+) -> int:
+    stmt = select(func.count()).select_from(ManagedResource).where(
+        ManagedResource.resource_type == resource_type,
+        ManagedResource.storage_backend == storage_backend,
+        ManagedResource.storage_key == storage_key,
+        ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+    )
+    if not include_deleted:
+        stmt = stmt.where(ManagedResource.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    return int(result.scalar_one())
+
+
 async def list_resources_by_name_prefix(
     db: AsyncSession,
     *,
