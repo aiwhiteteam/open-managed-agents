@@ -85,7 +85,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Store credentials in KMS/Vault instead of the generic resource table.
 - Implement OAuth enrollment and validation flows.
 - Implement credential refresh and webhook events.
-- Add secret redaction in logs. API responses redact credentials, and archive/delete purges persisted secret values in the MVP generic table.
+- Keep secret redaction in logs, API responses, and archive/delete purge paths covered. Secure secret storage still belongs in the KMS/Vault TODO above.
 
 ## Memory Stores
 
