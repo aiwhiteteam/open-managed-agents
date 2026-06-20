@@ -812,7 +812,10 @@ async def _list_top_level(
             if _deployment_agent_response(resource.data.get("agent")).get("id") == agent_id
         ]
     if has_error is not None:
-        resources = [resource for resource in resources if bool(resource.data.get("error")) is has_error]
+        if has_error:
+            resources = [resource for resource in resources if bool(resource.data.get("error"))]
+        else:
+            resources = [resource for resource in resources if bool(resource.data.get("session_id"))]
     if trigger_type is not None:
         resources = [
             resource

@@ -114,6 +114,8 @@ Deployment create/update validates the referenced agent, environment, and `initi
 
 ## Deployment Runs
 
+Deployment-run list supports SDK `deployment_id`, `trigger_type`, created-at filters, and exact `has_error` semantics: `true` returns runs with non-null `error`, while `false` returns runs with non-null `session_id`.
+
 | Operation | Route | Status |
 | --- | --- | --- |
 | retrieve | `GET /v1/deployment_runs/{deployment_run_id}` | partial |

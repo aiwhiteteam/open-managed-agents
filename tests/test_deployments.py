@@ -1,3 +1,5 @@
+from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from tests.conftest import TEST_HEADERS
 
 
@@ -369,6 +371,56 @@ async def test_deployment_run_records_session_creation_errors(client):
     assert run["type"] == "deployment_run"
     assert run["session_id"] is None
     assert run["error"]["type"] == "environment_archived_error"
+
+
+async def test_deployment_run_has_error_false_requires_session_id(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Run filter deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "run"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    successful_run = response.json()
+    assert successful_run["session_id"] is not None
+
+    async with session_scope() as db:
+        pending_run = await res_q.create_resource(
+            db,
+            resource_type="deployment_run",
+            parent_id=deployment["id"],
+            status="queued",
+            data={
+                "deployment_id": deployment["id"],
+                "agent": deployment["agent"],
+                "status": "queued",
+                "trigger": "manual",
+                "trigger_context": {"type": "manual"},
+                "error": None,
+            },
+        )
+        await db.commit()
+
+    response = await client.get(
+        "/v1/deployment_runs",
+        headers=TEST_HEADERS,
+        params={"deployment_id": deployment["id"], "has_error": False},
+    )
+    assert response.status_code == 200, response.text
+    run_ids = [item["id"] for item in response.json()["data"]]
+    assert successful_run["id"] in run_ids
+    assert pending_run.id not in run_ids
 
 
 async def test_deployment_archives_without_run_when_primary_agent_is_archived(client):

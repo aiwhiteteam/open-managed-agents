@@ -96,7 +96,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Deployments
 
-- Keep cron/timezone validation, required `user.message` deployment initial events, list `agent_id`/`status` filters with `status` vs `include_archived` validation, schedule timestamp bookkeeping, deployment-run session linkage, deployment `initial_events` delivery, deployment resource mounting, paused-manual-run behavior, terminal archive behavior, primary-agent archive auto-archive/no-run behavior, failed session-creation run records, and vault validation covered.
+- Keep cron/timezone validation, required `user.message` deployment initial events, list `agent_id`/`status` filters with `status` vs `include_archived` validation, deployment-run `has_error` semantics, schedule timestamp bookkeeping, deployment-run session linkage, deployment `initial_events` delivery, deployment resource mounting, paused-manual-run behavior, terminal archive behavior, primary-agent archive auto-archive/no-run behavior, failed session-creation run records, and vault validation covered.
 - Implement real scheduler execution, retries, and lease-safe deployment-run workers.
 - Emit deployment and session webhook events.
 
