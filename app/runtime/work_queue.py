@@ -17,6 +17,10 @@ RUNNABLE_WORK_STATUSES = {"queued", "rescheduling"}
 LEASED_WORK_STATUSES = {"leased", "running"}
 
 
+class WorkLeaseError(RuntimeError):
+    pass
+
+
 async def enqueue_session_run(
     db: AsyncSession,
     session: ManagedSession,
@@ -123,6 +127,7 @@ async def ack_work(
     *,
     worker_id: str | None = None,
 ) -> ManagedResource:
+    _require_lease_owner(work, worker_id=worker_id, action="ack")
     data = dict(work.data or {})
     data["acked_at"] = _utcnow_iso()
     if worker_id:
@@ -139,6 +144,7 @@ async def heartbeat_work(
     lease_seconds: int = 60,
     payload: dict[str, Any] | None = None,
 ) -> ManagedResource:
+    _require_lease_owner(work, worker_id=worker_id, action="heartbeat")
     data = dict(work.data or {})
     now = datetime.now(timezone.utc)
     data["last_heartbeat_at"] = now.isoformat()
@@ -170,6 +176,19 @@ def _lease_expired(work: ManagedResource, now: datetime) -> bool:
         return datetime.fromisoformat(expires_at) <= now
     except ValueError:
         return True
+
+
+def _require_lease_owner(work: ManagedResource, *, worker_id: str | None, action: str) -> None:
+    if work.status not in LEASED_WORK_STATUSES:
+        raise WorkLeaseError(f"Cannot {action} work item while status is {work.status}")
+    lease = (work.data or {}).get("lease") or {}
+    lease_worker_id = lease.get("worker_id")
+    if not lease_worker_id:
+        return
+    if not worker_id:
+        raise WorkLeaseError(f"worker_id is required to {action} this leased work item")
+    if str(lease_worker_id) != str(worker_id):
+        raise WorkLeaseError(f"Worker {worker_id} does not own this work lease")
 
 
 def _utcnow_iso() -> str:

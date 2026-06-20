@@ -14,7 +14,7 @@ from app.models.environments import (
 )
 from app.models.resources import GenericBody, resource_to_response
 from app.pagination import paginate, sort_by_created_at
-from app.runtime.work_queue import ack_work, heartbeat_work, lease_next_work, stop_work
+from app.runtime.work_queue import WorkLeaseError, ack_work, heartbeat_work, lease_next_work, stop_work
 
 router = APIRouter(
     prefix="/v1/environments",
@@ -207,7 +207,10 @@ async def ack_environment_work(
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    await ack_work(db, work, worker_id=worker_id)
+    try:
+        await ack_work(db, work, worker_id=worker_id)
+    except WorkLeaseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return resource_to_response(work, public_type="self_hosted_work")
 
@@ -223,13 +226,16 @@ async def heartbeat_environment_work(
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    await heartbeat_work(
-        db,
-        work,
-        worker_id=worker_id,
-        lease_seconds=lease_seconds,
-        payload=body.model_dump(mode="json"),
-    )
+    try:
+        await heartbeat_work(
+            db,
+            work,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            payload=body.model_dump(mode="json"),
+        )
+    except WorkLeaseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return resource_to_response(work, public_type="self_hosted_work")
 

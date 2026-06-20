@@ -1,5 +1,8 @@
 import asyncio
+from datetime import datetime, timezone
 
+from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from tests.conftest import TEST_HEADERS
 
 
@@ -89,6 +92,14 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/ack",
         headers=TEST_HEADERS,
+        params={"worker_id": "worker-2"},
+    )
+    assert response.status_code == 409
+    assert "does not own" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}/ack",
+        headers=TEST_HEADERS,
         params={"worker_id": "worker-1"},
     )
     assert response.status_code == 200, response.text
@@ -104,6 +115,14 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     assert response.json()["last_heartbeat"]["progress"] == 0.5
 
     response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}/heartbeat",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-2", "lease_seconds": 30},
+        json={"progress": 0.9},
+    )
+    assert response.status_code == 409
+
+    response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/stop",
         headers=TEST_HEADERS,
         json={"reason": "test stop"},
@@ -111,3 +130,54 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "stopped"
     assert response.json()["stop"]["reason"] == "test stop"
+
+
+async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "recover lease"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 200, response.text
+    first_lease = response.json()
+    assert first_lease["attempt"] == 1
+
+    async with session_scope() as db:
+        work = await res_q.get_resource(
+            db,
+            resource_id=first_lease["id"],
+            resource_type="environment_work",
+            parent_id=environment["id"],
+        )
+        assert work is not None
+        data = dict(work.data)
+        data["lease"] = {
+            **dict(data["lease"]),
+            "expires_at": datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat(),
+        }
+        await res_q.update_resource(db, work, data=data, status="running")
+        await db.commit()
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-2", "lease_seconds": 30},
+    )
+
+    assert response.status_code == 200, response.text
+    recovered = response.json()
+    assert recovered["id"] == first_lease["id"]
+    assert recovered["status"] == "leased"
+    assert recovered["attempt"] == 2
+    assert recovered["lease"]["worker_id"] == "worker-2"
