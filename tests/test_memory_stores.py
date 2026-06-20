@@ -221,6 +221,63 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     assert response.json()["operation"] == "deleted"
 
 
+async def test_memory_version_list_filters_api_key_session_and_view(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={
+            "path": "customers/acme",
+            "content": "created by key a",
+            "actor": "key-a",
+            "session_id": "sess_a",
+        },
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "content": "updated by key b",
+            "actor": "key-b",
+            "session_id": "sess_b",
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions",
+        headers=TEST_HEADERS,
+        params={"api_key_id": "key-a", "view": "basic"},
+    )
+    assert response.status_code == 200, response.text
+    versions = response.json()["data"]
+    assert [version["created_by"]["api_key_id"] for version in versions] == ["key-a"]
+    assert versions[0]["content"] is None
+    assert "session_id" not in versions[0]
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions",
+        headers=TEST_HEADERS,
+        params={"session_id": "sess_b", "view": "full"},
+    )
+    assert response.status_code == 200, response.text
+    versions = response.json()["data"]
+    assert [version["created_by"]["api_key_id"] for version in versions] == ["key-b"]
+    assert versions[0]["content"] == "updated by key b"
+    assert "session_id" not in versions[0]
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions/{versions[0]['id']}",
+        headers=TEST_HEADERS,
+        params={"view": "basic"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] is None
+
+
 async def test_memory_store_write_limits(client):
     store = await _create_store(client)
 

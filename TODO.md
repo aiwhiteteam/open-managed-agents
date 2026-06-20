@@ -39,7 +39,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Contract Extraction
 
 - Maintain `tests/contract/test_anthropic_sdk_contract.py`, which points the official Anthropic Python SDK at this service with strict response validation.
-- Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD/versioned retrieve, agent versions, environment lifecycle/scope/work queue, session lifecycle/events/resources/threads, `user.tool_result`, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle including auth unions, memory store/memory/memory-version lifecycle, deployment/deployment-run lifecycle, and user profile lifecycle.
+- Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD/versioned retrieve, agent versions, environment lifecycle/scope/work queue, session lifecycle/events/resources/threads, `user.tool_result`, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle including auth unions, memory store/memory/memory-version lifecycle and memory-version `api_key_id`/`session_id`/`view` filters, deployment/deployment-run lifecycle, and user profile lifecycle.
 - Expand pagination/filter contract tests from representative SDK coverage to exhaustive per-route edge cases, especially less common filters. Invalid cursor handling, expired cursor handling, max limit clamping, timestamp aliases, and core SDK pagination paths have test coverage.
 - Verify exact deleted-resource response shapes for future route families as they are added.
 
@@ -90,7 +90,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Memory Stores
 
 - Extract Memory Store routes into typed request/response models instead of the current generic-resource compatibility layer.
-- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. Memory content size, per-store count limits, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
+- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. Memory content size, per-store count limits, memory-version `api_key_id`/`session_id`/`view` filters, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
 - Add semantic search/vector indexing if memories need retrieval beyond exact path and prefix lookup.
 - Keep mounted memory stores integrated into the runtime context builder. Session creation enforces the official 8 mounted stores limit and rejects new attachments to archived stores. Full semantic/vector retrieval tools remain TODO.
 

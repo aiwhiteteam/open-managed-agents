@@ -39,13 +39,13 @@ Current passing coverage:
 - `client.beta.vaults.credentials.create/retrieve/update/list/archive/delete/mcp_oauth_validate`, including `mcp_oauth`, `static_bearer`, and `environment_variable` auth unions.
 - `client.beta.memory_stores.create/retrieve/update/list/archive/delete`.
 - `client.beta.memory_stores.memories.create/retrieve/update/list/delete`.
-- `client.beta.memory_stores.memory_versions.retrieve/list/redact`.
+- `client.beta.memory_stores.memory_versions.retrieve/list/redact`, including `api_key_id`, `session_id`, and `view` list filters.
 - `client.beta.deployments.create/retrieve/update/list/archive/pause/unpause/run`.
 - `client.beta.deployment_runs.retrieve/list`.
 - `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`.
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` and `before_id` pagination for files.
-- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status`, `path_prefix`, `order/order_by`, `deployment_id`, `trigger_type`, and `has_error`.
+- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status`, `path_prefix`, `order/order_by`, `deployment_id`, memory-version `api_key_id`/`session_id`/`view`, `trigger_type`, and `has_error`.
 - Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and high-limit clamping.
 
 Important remaining coverage gaps:

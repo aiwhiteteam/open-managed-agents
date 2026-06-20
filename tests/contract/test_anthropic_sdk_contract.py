@@ -991,6 +991,28 @@ async def test_anthropic_sdk_memory_stores_contract():
         assert [item.operation for item in versions] == ["modified", "created"]
         assert versions[0].content == updated_content
 
+        filter_memory = await client.beta.memory_stores.memories.create(
+            store.id,
+            path="/filters/sdk.md",
+            content="filterable memory",
+            view="full",
+            extra_body={"actor": "sdk-filter-key", "session_id": "sess_sdk_filter"},
+            **BETA_KWARG,
+        )
+        filtered_versions = [
+            item
+            async for item in client.beta.memory_stores.memory_versions.list(
+                store.id,
+                api_key_id="sdk-filter-key",
+                session_id="sess_sdk_filter",
+                view="basic",
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert [item.memory_id for item in filtered_versions] == [filter_memory.id]
+        assert filtered_versions[0].content is None
+
         retrieved_version = await client.beta.memory_stores.memory_versions.retrieve(
             versions[0].id,
             memory_store_id=store.id,

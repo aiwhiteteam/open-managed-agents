@@ -139,7 +139,7 @@ Deployment create/update validates the referenced agent, environment, and `initi
 
 ## Memory Stores
 
-Memory records enforce the official 100KB content limit and 2000 memories per store limit. Every create/update/delete produces an immutable memory version; store-level version listing and version retrieve keep working after the memory is deleted. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
+Memory records enforce the official 100KB content limit and 2000 memories per store limit. Every create/update/delete produces an immutable memory version; store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
 
 | Operation | Route | Status |
 | --- | --- | --- |

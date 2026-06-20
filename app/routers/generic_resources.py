@@ -393,6 +393,9 @@ async def list_memory_versions(
     page: str | None = None,
     memory_id: str | None = None,
     operation: str | None = None,
+    api_key_id: str | None = None,
+    session_id: str | None = None,
+    view: str | None = None,
     created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
@@ -415,14 +418,19 @@ async def list_memory_versions(
     versions = filter_created_at(versions, created_at_gte=created_at_gte, created_at_lte=created_at_lte)
     if operation is not None:
         versions = [version for version in versions if _memory_version_operation(version.data.get("operation")) == operation]
+    if api_key_id is not None:
+        versions = [version for version in versions if _memory_version_api_key_id(version) == api_key_id]
+    if session_id is not None:
+        versions = [version for version in versions if _memory_version_session_id(version) == session_id]
     versions = sort_by_created_at(versions, order="desc")
-    return paginate([_resource_response(v) for v in versions], limit=limit, page=page)
+    return paginate([_resource_response(v, view=view) for v in versions], limit=limit, page=page)
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}")
 async def retrieve_memory_version(
     memory_store_id: str,
     memory_version_id: str,
+    view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_store_id, "memory_store")
@@ -438,7 +446,7 @@ async def retrieve_memory_version(
     )
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
-    return _resource_response(version)
+    return _resource_response(version, view=view)
 
 
 @router.post("/v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact")
@@ -1203,6 +1211,7 @@ async def _create_memory_version(
             "snapshot": snapshot,
             "actor": actor,
             "created_by": _api_actor(actor),
+            "session_id": version_data.get("session_id"),
             "operation": operation,
             "redacted": False,
         },
@@ -1272,6 +1281,7 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
     response["memory_id"] = data.get("memory_id") or resource.parent_id
     response["operation"] = _memory_version_operation(data.get("operation"))
     response["created_by"] = data.get("created_by") or _api_actor(str(data.get("actor") or "api"))
+    response.pop("session_id", None)
     response["redacted_at"] = data.get("redacted_at")
     if redacted:
         response["content"] = None
@@ -1285,6 +1295,28 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
         response["content_sha256"] = data.get("content_sha256") or snapshot.get("content_sha256")
         response["content_size_bytes"] = data.get("content_size_bytes") or snapshot.get("content_size_bytes")
     return response
+
+
+def _memory_version_api_key_id(resource) -> str | None:
+    data = resource.data or {}
+    created_by = data.get("created_by")
+    if isinstance(created_by, dict):
+        api_key_id = created_by.get("api_key_id")
+        if api_key_id is not None:
+            return str(api_key_id)
+    actor = data.get("actor")
+    return str(actor) if actor is not None else None
+
+
+def _memory_version_session_id(resource) -> str | None:
+    data = resource.data or {}
+    value = data.get("session_id")
+    if value is not None:
+        return str(value)
+    snapshot = data.get("snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("session_id") is not None:
+        return str(snapshot["session_id"])
+    return None
 
 
 def _memory_version_operation(value: Any) -> str:
