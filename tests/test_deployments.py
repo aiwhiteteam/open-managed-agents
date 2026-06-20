@@ -281,6 +281,77 @@ async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     )
     assert response.status_code == 201, response.text
     deployment = response.json()
+    assert deployment["paused_reason"] == {"type": "manual"}
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["session_id"].startswith("sess_")
+
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}/run",
+        headers=TEST_HEADERS,
+        json={"trigger": "schedule", "scheduled_for": "2026-06-20T12:00:00Z"},
+    )
+    assert response.status_code == 409
+
+
+async def test_deployment_run_records_session_creation_errors(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Archived environment deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "run"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/environments/{environment['id']}/archive", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    run = response.json()
+    assert run["type"] == "deployment_run"
+    assert run["session_id"] is None
+    assert run["error"]["type"] == "environment_archived_error"
+
+
+async def test_archived_deployment_is_terminal(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Terminal deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "run"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/archive", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}",
+        headers=TEST_HEADERS,
+        json={"metadata": {"after": "archive"}},
+    )
+    assert response.status_code == 409
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/pause", headers=TEST_HEADERS)
+    assert response.status_code == 409
 
     response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
     assert response.status_code == 409

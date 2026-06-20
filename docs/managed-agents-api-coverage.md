@@ -108,7 +108,7 @@ Uploaded file mounts create session-scoped object-storage copies, validate absol
 | run | `POST /v1/deployments/{deployment_id}/run` | partial |
 | unpause | `POST /v1/deployments/{deployment_id}/unpause` | partial |
 
-Deployment create/update validates the referenced agent, environment, and non-empty `initial_events`; short-form `agent="<agent_id>"` pins the latest active agent version. Deployment resources use the SDK session-resource union for files, GitHub repositories, and memory stores. Deployment responses omit write-only GitHub authorization tokens, and manual deployment runs mount deployment resources onto the created session.
+Deployment create/update validates the referenced agent, environment, and non-empty `initial_events`; short-form `agent="<agent_id>"` pins the latest active agent version. Deployment resources use the SDK session-resource union for files, GitHub repositories, and memory stores. Deployment responses omit write-only GitHub authorization tokens, and manual deployment runs mount deployment resources onto the created session. Paused deployments still allow manual runs while suppressing scheduled triggers, archived deployments are terminal for modification/run routes, and failed session creation is recorded on the deployment run.
 
 ## Deployment Runs
 

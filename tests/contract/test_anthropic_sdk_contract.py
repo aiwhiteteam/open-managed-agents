@@ -1095,9 +1095,16 @@ async def test_anthropic_sdk_deployments_contract():
 
         paused = await client.beta.deployments.pause(deployment.id, **BETA_KWARG)
         assert paused.status == "paused"
+        assert paused.model_dump().get("paused_reason") == {"type": "manual"}
+
+        paused_run = await client.beta.deployments.run(deployment.id, **BETA_KWARG)
+        assert paused_run.type == "deployment_run"
+        assert paused_run.trigger_context.type == "manual"
+        assert paused_run.session_id is not None
 
         unpaused = await client.beta.deployments.unpause(deployment.id, **BETA_KWARG)
         assert unpaused.status == "active"
+        assert unpaused.model_dump().get("paused_reason") is None
 
         run = await client.beta.deployments.run(deployment.id, **BETA_KWARG)
         assert run.type == "deployment_run"

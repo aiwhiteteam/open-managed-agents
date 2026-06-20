@@ -473,6 +473,7 @@ async def retrieve_deployment(deployment_id: str, db: AsyncSession = Depends(get
 @router.post("/v1/deployments/{deployment_id}")
 async def update_deployment(deployment_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
     deployment = await _must_exist(db, deployment_id, "deployment")
+    _ensure_deployment_mutable(deployment)
     data = _normalize_deployment_data(_merge_data(deployment.data, body.model_dump(mode="json")))
     await _validate_deployment_definition(db, data)
     await res_q.update_resource(
@@ -494,8 +495,10 @@ async def archive_deployment(deployment_id: str, db: AsyncSession = Depends(get_
 @router.post("/v1/deployments/{deployment_id}/pause")
 async def pause_deployment(deployment_id: str, db: AsyncSession = Depends(get_session)):
     deployment = await _must_exist(db, deployment_id, "deployment")
+    _ensure_deployment_mutable(deployment)
     data = dict(deployment.data)
     data["status"] = "paused"
+    data["paused_reason"] = {"type": "manual"}
     await res_q.update_resource(db, deployment, data=data, status="paused")
     await db.commit()
     return _resource_response(deployment)
@@ -504,8 +507,10 @@ async def pause_deployment(deployment_id: str, db: AsyncSession = Depends(get_se
 @router.post("/v1/deployments/{deployment_id}/unpause")
 async def unpause_deployment(deployment_id: str, db: AsyncSession = Depends(get_session)):
     deployment = await _must_exist(db, deployment_id, "deployment")
+    _ensure_deployment_mutable(deployment)
     data = dict(deployment.data)
     data["status"] = "active"
+    data.pop("paused_reason", None)
     await res_q.update_resource(db, deployment, data=data, status="active")
     await db.commit()
     return _resource_response(deployment)
@@ -518,12 +523,14 @@ async def run_deployment(
     db: AsyncSession = Depends(get_session),
 ):
     deployment = await _must_exist(db, deployment_id, "deployment")
-    if deployment.status == "paused" or deployment.data.get("status") == "paused":
-        raise HTTPException(status_code=409, detail="Deployment is paused")
+    _ensure_deployment_mutable(deployment)
     run_input = body.model_dump(mode="json") if body is not None else {}
+    trigger = run_input.get("trigger") or run_input.get("trigger_type") or "manual"
+    if (deployment.status == "paused" or deployment.data.get("status") == "paused") and trigger != "manual":
+        raise HTTPException(status_code=409, detail="Deployment schedule is paused")
     deployment_data = dict(deployment.data or {})
     attempt = int(run_input.get("attempt") or 1)
-    if (run_input.get("trigger") or run_input.get("trigger_type")) == "schedule":
+    if trigger == "schedule":
         schedule = dict(deployment_data.get("schedule") or {})
         if schedule.get("expression") and schedule.get("timezone"):
             schedule["last_run_at"] = utcnow().isoformat()
@@ -540,12 +547,19 @@ async def run_deployment(
             "agent": deployment_data.get("agent"),
             "status": "queued",
             "attempt": attempt,
-            "trigger": run_input.get("trigger") or "manual",
+            "trigger": trigger,
             "trigger_context": _trigger_context(run_input),
             "scheduled_for": run_input.get("scheduled_for"),
         },
     )
-    session = await _maybe_create_deployment_session(db, deployment, run, run_input)
+    session = None
+    try:
+        session = await _maybe_create_deployment_session(db, deployment, run, run_input)
+    except DeploymentRunCreationError as exc:
+        run_data = dict(run.data or {})
+        run_data["status"] = "error"
+        run_data["error"] = exc.error
+        await res_q.update_resource(db, run, data=run_data, status="error")
     if session is not None:
         run_data = dict(run.data)
         run_data["session_id"] = session.id
@@ -1217,12 +1231,27 @@ def _api_actor(api_key_id: str) -> dict[str, str]:
     return {"type": "api_actor", "api_key_id": api_key_id}
 
 
+class DeploymentRunCreationError(RuntimeError):
+    def __init__(self, error_type: str, message: str):
+        super().__init__(message)
+        self.error = {"type": error_type, "message": message}
+
+
+def _ensure_deployment_mutable(deployment) -> None:
+    if deployment.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Deployment is archived")
+
+
 def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     status = str(normalized.get("status") or "active")
     if status not in {"active", "paused"}:
         raise HTTPException(status_code=422, detail="Deployment status must be active or paused")
     normalized["status"] = status
+    if status == "paused":
+        normalized.setdefault("paused_reason", {"type": "manual"})
+    else:
+        normalized.pop("paused_reason", None)
     normalized["agent"] = _deployment_agent_reference_input(normalized.get("agent"))
     normalized.setdefault("environment_id", "")
     normalized.setdefault("initial_events", [])
@@ -1523,15 +1552,28 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
 
     agent_id, requested_version = _deployment_agent_ref(agent_ref)
     agent = await agents_q.get_agent(db, agent_id)
-    if agent is None or agent.archived_at is not None:
-        raise HTTPException(status_code=422, detail="Deployment agent not found")
+    if agent is None:
+        raise DeploymentRunCreationError("agent_not_found_error", f"agent `{agent_id}` was not found")
+    if agent.archived_at is not None:
+        raise DeploymentRunCreationError("agent_archived_error", f"agent `{agent_id}` is archived")
     version = requested_version or agent.active_version
     agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=version)
     if agent_version is None:
-        raise HTTPException(status_code=422, detail="Deployment agent version not found")
+        raise DeploymentRunCreationError(
+            "agent_version_not_found_error",
+            f"agent `{agent_id}` version `{version}` was not found",
+        )
     environment = await env_q.get_environment(db, str(environment_id))
     if environment is None or environment.deleted_at is not None:
-        raise HTTPException(status_code=422, detail="Deployment environment not found")
+        raise DeploymentRunCreationError(
+            "environment_not_found_error",
+            f"environment `{environment_id}` was not found",
+        )
+    if environment.archived_at is not None:
+        raise DeploymentRunCreationError(
+            "environment_archived_error",
+            f"environment `{environment_id}` is archived",
+        )
 
     metadata = dict(run_input.get("metadata") or {})
     metadata.update({"deployment_id": deployment.id, "deployment_run_id": run.id})
