@@ -89,7 +89,7 @@ async def list_agent_versions(
         raise HTTPException(status_code=404, detail="Agent not found")
     result = await db.execute(agents_q.agent_versions_query(agent_id))
     versions = [version_to_agent_response(agent, v) for v in result.scalars().all()]
-    return paginate(versions, limit=limit, page=page)
+    return paginate(versions, limit=limit, page=page, max_limit=100)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)

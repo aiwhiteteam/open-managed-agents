@@ -161,3 +161,27 @@ async def test_agent_limit_is_clamped_to_sdk_maximum(client):
     assert response.status_code == 200, response.text
     assert len(response.json()["data"]) == 100
     assert response.json()["has_more"] is True
+
+
+async def test_agent_versions_limit_is_clamped_to_sdk_maximum(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Version Limit Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    for index in range(104):
+        response = await client.patch(
+            f"/v1/agents/{agent['id']}",
+            headers=TEST_HEADERS,
+            json={"version": index + 1, "system": f"version {index + 2}"},
+        )
+        assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/agents/{agent['id']}/versions", headers=TEST_HEADERS, params={"limit": 5000})
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 100
+    assert response.json()["has_more"] is True
