@@ -40,7 +40,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 - Maintain `tests/contract/test_anthropic_sdk_contract.py`, which points the official Anthropic Python SDK at this service with strict response validation.
 - Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD/versioned retrieve, agent versions, environment lifecycle/scope/work queue, session lifecycle/events/resources/threads, `user.tool_result`, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle including auth unions, memory store/memory/memory-version lifecycle and memory-version `api_key_id`/`session_id`/`view` filters, deployment/deployment-run lifecycle, and user profile lifecycle.
-- Expand pagination/filter contract tests from representative SDK coverage to exhaustive per-route edge cases, especially less common filters. Invalid cursor handling, expired cursor handling, SDK route-specific max limit clamping, timestamp aliases, and core SDK pagination paths have test coverage.
+- Expand pagination/filter contract tests from representative SDK coverage to exhaustive per-route edge cases, especially less common filters. Invalid cursor handling, expired cursor handling, SDK route-specific max limit clamping, timestamp aliases, invalid sort parameters, and core SDK pagination paths have test coverage.
 - Verify exact deleted-resource response shapes for future route families as they are added.
 
 ## Runtime Semantics

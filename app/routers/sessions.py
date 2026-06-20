@@ -32,7 +32,7 @@ from app.models.sessions import (
     session_to_response,
 )
 from app.models.resources import GenericBody
-from app.pagination import filter_created_at, paginate, sort_by_created_at
+from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
 from app.session_resources import (
     create_session_resource,
@@ -388,6 +388,7 @@ async def list_session_events(
     if requested_types:
         allowed_types = set(requested_types)
         events = [event for event in events if event.type in allowed_types]
+    order = normalize_sort_order(order, default="asc")
     if order == "desc":
         events = list(reversed(events))
     return paginate([event_to_response(e) for e in events], limit=limit, page=page)

@@ -20,7 +20,7 @@ from app.db.queries import sessions as sessions_q
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
-from app.pagination import filter_created_at, paginate, sort_by_created_at
+from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.session_resources import create_session_resource
 
 router = APIRouter(tags=["managed resources"], dependencies=[Depends(require_api_access)])
@@ -1417,6 +1417,9 @@ def _memory_version_operation(value: Any) -> str:
 
 
 def _sort_memories(resources: list, *, order: str, order_by: str) -> list:
+    order = normalize_sort_order(order, default="asc")
+    if order_by not in {"path", "created_at"}:
+        raise HTTPException(status_code=422, detail="order_by must be path or created_at")
     reverse = order == "desc"
     if order_by == "created_at":
         return sort_by_created_at(resources, order=order)

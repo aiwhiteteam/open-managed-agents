@@ -84,8 +84,15 @@ def filter_created_at(
 
 
 def sort_by_created_at(items: Iterable[T], *, order: str | None = "desc") -> list[T]:
-    reverse = (order or "desc") != "asc"
+    reverse = normalize_sort_order(order) == "desc"
     return sorted(items, key=lambda item: (created_at_of(item) or datetime.min, id_of(item) or ""), reverse=reverse)
+
+
+def normalize_sort_order(order: str | None, *, default: str = "desc") -> str:
+    normalized = (order or default).lower()
+    if normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=422, detail="order must be asc or desc")
+    return normalized
 
 
 def created_at_of(item: Any) -> datetime | None:
