@@ -32,14 +32,16 @@ async def create_agent(
     body: AgentCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    name = _normalize_agent_name(body.name)
+    model = _normalize_agent_model(body.model)
     tools = normalize_agent_tools(body.tools)
     validate_mcp_bindings(body.mcp_servers, tools)
     multiagent = await _normalize_multiagent_roster(db, body.multiagent)
     skills = await _normalize_skill_refs(db, body.skills)
     agent, version = await agents_q.create_agent(
         db,
-        name=body.name,
-        model=body.model,
+        name=name,
+        model=model,
         system=body.system,
         description=body.description,
         tools=tools,
@@ -337,13 +339,9 @@ def _merge_agent_update(active, agent, update: dict) -> dict:
     runtime = active.runtime
 
     if "name" in update:
-        if update["name"] is None:
-            raise HTTPException(status_code=422, detail="name cannot be null")
-        name = update["name"]
+        name = _normalize_agent_name(update["name"], field_name="name")
     if "model" in update:
-        if update["model"] is None:
-            raise HTTPException(status_code=422, detail="model cannot be null")
-        model = update["model"] if isinstance(update["model"], dict) else {"id": update["model"]}
+        model = _normalize_agent_model(update["model"])
     if "system" in update:
         system = update["system"]
     if "description" in update:
@@ -373,3 +371,27 @@ def _merge_agent_update(active, agent, update: dict) -> dict:
         "metadata": metadata,
         "runtime": runtime,
     }
+
+
+def _normalize_agent_name(value: Any, *, field_name: str = "name") -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=422, detail=f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+def _normalize_agent_model(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        model_id = value.strip()
+        if not model_id:
+            raise HTTPException(status_code=422, detail="model id must be a non-empty string")
+        return {"id": model_id}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="model must be a string or object")
+    normalized = dict(value)
+    model_id = normalized.get("id") or normalized.get("model")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise HTTPException(status_code=422, detail="model.id must be a non-empty string")
+    normalized["id"] = model_id.strip()
+    if "speed" in normalized and normalized["speed"] not in {None, "standard", "fast"}:
+        raise HTTPException(status_code=422, detail="model.speed must be standard or fast")
+    return normalized

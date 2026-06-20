@@ -91,6 +91,57 @@ async def test_agent_update_rejects_stale_version(client):
     assert response.status_code == 409
 
 
+async def test_agent_name_and_model_contract_is_enforced(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "   ", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 422
+    assert "non-empty" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Missing Model ID", "model": {"provider": "openai"}},
+    )
+    assert response.status_code == 422
+    assert "model.id" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Bad Speed", "model": {"id": "gpt-5.5", "speed": "warp"}},
+    )
+    assert response.status_code == 422
+    assert "model.speed" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Model Alias", "model": {"model": "mini-max/MiniMax-Text-01", "provider": "mini-max"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+    assert agent["name"] == "Model Alias"
+    assert agent["model"]["id"] == "mini-max/MiniMax-Text-01"
+    assert agent["model"]["provider"] == "mini-max"
+
+    response = await client.patch(
+        f"/v1/agents/{agent['id']}",
+        headers=TEST_HEADERS,
+        json={"version": agent["version"], "name": ""},
+    )
+    assert response.status_code == 422
+
+    response = await client.patch(
+        f"/v1/agents/{agent['id']}",
+        headers=TEST_HEADERS,
+        json={"version": agent["version"], "model": ""},
+    )
+    assert response.status_code == 422
+
+
 async def test_agent_metadata_limits_are_enforced(client):
     response = await client.post(
         "/v1/agents",
