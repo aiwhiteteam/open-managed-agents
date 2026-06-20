@@ -1,5 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
+from app.routers.generic_resources import run_due_scheduled_deployments
 from tests.conftest import TEST_HEADERS
 
 
@@ -80,6 +83,65 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     scheduled_deployment = response.json()
     assert scheduled_deployment["schedule"]["last_run_at"] is not None
     assert len(scheduled_deployment["schedule"]["upcoming_runs_at"]) == 5
+
+
+async def test_due_deployment_scheduler_tick_creates_idempotent_scheduled_run(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Scheduled report",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "scheduled"}],
+            "schedule": {"type": "cron", "cron": "0 9 * * *", "timezone": "UTC"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+    due_at = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
+
+    async with session_scope() as db:
+        resource = await res_q.get_resource(db, resource_id=deployment["id"], resource_type="deployment")
+        data = dict(resource.data)
+        schedule = dict(data["schedule"])
+        schedule["upcoming_runs_at"] = [due_at.isoformat()]
+        data["schedule"] = schedule
+        await res_q.update_resource(db, resource, data=data)
+        await db.commit()
+
+    async with session_scope() as db:
+        runs = await run_due_scheduled_deployments(db, now=(due_at + timedelta(minutes=1)).replace(tzinfo=None))
+        await db.commit()
+
+    assert len(runs) == 1
+    assert runs[0]["deployment_id"] == deployment["id"]
+    assert runs[0]["trigger_context"]["type"] == "schedule"
+    assert runs[0]["trigger_context"]["scheduled_at"] == due_at.isoformat()
+    assert runs[0]["session_id"].startswith("sess_")
+
+    async with session_scope() as db:
+        runs = await run_due_scheduled_deployments(db, now=due_at + timedelta(minutes=2))
+        await db.commit()
+
+    assert runs == []
+
+    response = await client.get(
+        "/v1/deployment_runs",
+        headers=TEST_HEADERS,
+        params={"deployment_id": deployment["id"], "trigger_type": "schedule"},
+    )
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 1
+
+    response = await client.get(f"/v1/deployments/{deployment['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    schedule = response.json()["schedule"]
+    assert schedule["last_run_at"] is not None
+    assert due_at.isoformat() not in schedule["upcoming_runs_at"]
 
 
 async def test_deployment_agent_string_pins_latest_version(client):

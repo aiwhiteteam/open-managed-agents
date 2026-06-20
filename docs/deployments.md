@@ -9,6 +9,7 @@ Deployments are stored in Postgres as managed resources.
 - Schedule support validates cron fields and IANA timezone names.
 - Scheduled deployments return up to five computed `upcoming_runs_at` timestamps.
 - Scheduled runs update `last_run_at` and refresh `upcoming_runs_at`.
+- `run_due_scheduled_deployments(db, now=...)` is an importable scheduler tick that creates due scheduled deployment runs and linked sessions idempotently.
 - `pause` and `unpause` update both resource status and deployment metadata; pause sets `paused_reason` to `{"type": "manual"}`.
 - Paused deployments still allow manual `run` calls, but scheduled triggers are suppressed.
 - Archive is terminal for update, pause, unpause, and run operations.
@@ -34,4 +35,4 @@ Deployments are stored in Postgres as managed resources.
 
 ## Remaining Production Work
 
-The MVP does not yet execute schedules by itself. Production deployment execution should use a durable scheduler plus a worker queue with retries, leases, and idempotency.
+The MVP has an importable scheduler tick, but it is not a production scheduler by itself. Production deployment execution should call the tick from a durable scheduler plus a worker queue with retries, leases, fencing, and idempotency.

@@ -600,8 +600,43 @@ async def run_deployment(
     db: AsyncSession = Depends(get_session),
 ):
     deployment = await _must_exist(db, deployment_id, "deployment")
-    _ensure_deployment_mutable(deployment)
     run_input = body.model_dump(mode="json") if body is not None else {}
+    run = await _run_deployment_resource(db, deployment, run_input)
+    await db.commit()
+    return _resource_response(run)
+
+
+async def run_due_scheduled_deployments(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    now = _parse_datetime(now) or utcnow()
+    deployments = await res_q.list_resources(
+        db,
+        resource_type="deployment",
+        limit=1000,
+        include_archived=False,
+    )
+    runs = []
+    for deployment in deployments:
+        if len(runs) >= limit:
+            break
+        due_at = await _scheduled_deployment_due_at(db, deployment, now=now)
+        if due_at is None:
+            continue
+        run = await _run_deployment_resource(
+            db,
+            deployment,
+            {"trigger": "schedule", "scheduled_for": due_at.isoformat()},
+        )
+        runs.append(_resource_response(run))
+    return runs
+
+
+async def _run_deployment_resource(db: AsyncSession, deployment, run_input: dict[str, Any]):
+    _ensure_deployment_mutable(deployment)
     trigger = run_input.get("trigger") or run_input.get("trigger_type") or "manual"
     if (deployment.status == "paused" or deployment.data.get("status") == "paused") and trigger != "manual":
         raise HTTPException(status_code=409, detail="Deployment schedule is paused")
@@ -642,8 +677,7 @@ async def run_deployment(
         run_data = dict(run.data)
         run_data["session_id"] = session.id
         await res_q.update_resource(db, run, data=run_data)
-    await db.commit()
-    return _resource_response(run)
+    return run
 
 
 @router.get("/v1/deployment_runs")
@@ -1446,6 +1480,54 @@ class DeploymentRunCreationError(RuntimeError):
     def __init__(self, error_type: str, message: str):
         super().__init__(message)
         self.error = {"type": error_type, "message": message}
+
+
+async def _scheduled_deployment_due_at(db: AsyncSession, deployment, *, now: datetime) -> datetime | None:
+    if deployment.status == "paused" or (deployment.data or {}).get("status") == "paused":
+        return None
+    schedule = (deployment.data or {}).get("schedule") or {}
+    if not isinstance(schedule, dict) or not schedule.get("enabled", True):
+        return None
+    due_candidates = [
+        due_at
+        for due_at in (_parse_datetime(value) for value in schedule.get("upcoming_runs_at") or [])
+        if due_at is not None and due_at <= now
+    ]
+    if not due_candidates:
+        return None
+    due_at = min(due_candidates)
+    if await _scheduled_deployment_run_exists(db, deployment.id, due_at):
+        return None
+    return due_at
+
+
+async def _scheduled_deployment_run_exists(db: AsyncSession, deployment_id: str, scheduled_for: datetime) -> bool:
+    runs = await res_q.list_resources(
+        db,
+        resource_type="deployment_run",
+        parent_id=deployment_id,
+        limit=1000,
+    )
+    for run in runs:
+        data = run.data or {}
+        if data.get("trigger") == "schedule" and _parse_datetime(data.get("scheduled_for")) == scheduled_for:
+            return True
+    return False
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo("UTC"))
+    return parsed
 
 
 def _ensure_deployment_mutable(deployment) -> None:
