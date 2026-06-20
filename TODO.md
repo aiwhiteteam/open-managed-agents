@@ -18,7 +18,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
 - Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through validated workspace vault context. Runtime URL matching and non-terminal missing-auth session errors have local coverage; real MCP connection/OAuth refresh remains TODO.
 - Implement vault credential lifecycle: enrollment, refresh, runtime resolution, revocation, and webhook emission. Response redaction and archive/delete secret purge have local coverage.
-- Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events.
+- Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events. A deterministic local `span.outcome_evaluation` MVP exists; real grader LLM loops remain TODO.
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent.
 - Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
 - Implement deployment scheduler semantics: autonomous scheduled session creation, retries, and lease-safe workers. Cron/timezone validation plus `upcoming_runs_at`/`last_run_at` bookkeeping have local coverage.

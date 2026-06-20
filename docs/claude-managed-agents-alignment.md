@@ -65,7 +65,7 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | File resources | Uploaded files can be mounted into sessions; session mounts create session-scoped file references; mounts are read-only copies. | Partial |
 | Memory stores | Workspace-scoped text stores mount into a session as directories; memory changes produce immutable versions. | Partial |
 | Vault credentials | Vaults are workspace-scoped; secret values are write-only; sessions validate referenced vaults; runtime resolves and refreshes credentials. | Partial; runtime resolution/refresh still TODO |
-| Outcomes | `user.define_outcome` starts autonomous work; separate grader context evaluates rubric and emits outcome span events. | Stub/partial |
+| Outcomes | `user.define_outcome` starts autonomous work; separate grader context evaluates rubric and emits outcome span events. | Partial; deterministic local evaluation implemented, real grader loops still TODO |
 | Multiagent threads | Threads share sandbox/filesystem/vault context but keep isolated event streams and context. | Stub |
 | Deployments | Cron schedule plus initial events autonomously create sessions and deployment run records. | Partial |
 | Webhooks | Deliver compact event identifiers with signatures, retry, freshness, idempotency, and disable behavior. | TODO |

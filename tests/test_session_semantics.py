@@ -500,6 +500,41 @@ async def test_missing_mcp_credentials_emit_session_error_without_blocking_sessi
     assert session["run_state"]["mcp_auth"]["errors"][0]["type"] == "mcp_auth_missing"
 
 
+async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={
+            "events": [
+                {
+                    "type": "user.define_outcome",
+                    "objective": "Produce a customer-ready summary.",
+                    "rubric": {"must_include": ["customer"]},
+                    "max_iterations": 2,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    events = await _wait_for_event_type(client, session["id"], "span.outcome_evaluation")
+    outcome_event = next(event for event in events if event["type"] == "span.outcome_evaluation")
+    assert outcome_event["outcome"]["objective"] == "Produce a customer-ready summary."
+    assert outcome_event["outcome"]["max_iterations"] == 2
+    assert outcome_event["result"]["type"] == "deterministic_local_grader"
+    assert outcome_event["result"]["passed"] is True
+
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["outcome_evaluations"][0]["event_id"] == outcome_event["id"]
+    assert session["outcome_evaluations"][0]["grader_context"]["max_iterations"] == 2
+
+
 async def test_primary_session_thread_archive_is_persisted(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

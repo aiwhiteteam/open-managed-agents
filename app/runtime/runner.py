@@ -176,11 +176,22 @@ async def _run_session_turn(session_id: str) -> None:
                     },
                 )
             stop_reason = {"type": "end_turn"}
+            status_details = _status_details_without_runtime_retry(session.status_details)
+            outcome_evaluation = _outcome_evaluation_from_history(history, result)
+            if outcome_evaluation is not None:
+                outcome_event = await events_q.append_event(
+                    db,
+                    session,
+                    event_type="span.outcome_evaluation",
+                    payload={"type": "span.outcome_evaluation", **outcome_evaluation},
+                )
+                outcome_evaluation = {**outcome_evaluation, "event_id": outcome_event.id}
+                status_details = _status_details_with_outcome_evaluation(status_details, outcome_evaluation)
             await sessions_q.update_session(
                 db,
                 session,
                 status=SESSION_IDLE,
-                status_details=_status_details_without_runtime_retry(session.status_details),
+                status_details=status_details,
                 stop_reason=stop_reason,
                 run_state=result.run_state,
                 sandbox_state=result.sandbox_state,
@@ -380,6 +391,17 @@ def _positive_int(value: Any) -> int | None:
 def _status_details_without_runtime_retry(status_details: dict[str, Any] | None) -> dict[str, Any]:
     details = dict(status_details or {})
     details.pop("runtime_retry", None)
+    return details
+
+
+def _status_details_with_outcome_evaluation(
+    status_details: dict[str, Any],
+    outcome_evaluation: dict[str, Any],
+) -> dict[str, Any]:
+    details = dict(status_details or {})
+    evaluations = list(details.get("outcome_evaluations") or [])
+    evaluations.append(outcome_evaluation)
+    details["outcome_evaluations"] = evaluations
     return details
 
 
@@ -1149,7 +1171,69 @@ def _latest_user_text(history) -> str:
     for event in reversed(history):
         if event.type == "user.message":
             return _text_from_payload(event.payload)
+        if event.type == "user.define_outcome":
+            return _outcome_prompt(event.payload)
     return ""
+
+
+def _latest_outcome_event(history):
+    for event in reversed(history):
+        if event.type == "user.define_outcome":
+            return event
+    return None
+
+
+def _outcome_evaluation_from_history(history, result: RuntimeResult) -> dict[str, Any] | None:
+    outcome_event = _latest_outcome_event(history)
+    if outcome_event is None:
+        return None
+    outcome = _outcome_spec(outcome_event.payload)
+    final_text = result.final_text or ""
+    passed = bool(final_text.strip())
+    return {
+        "outcome": outcome,
+        "result": {
+            "type": "deterministic_local_grader",
+            "passed": passed,
+            "score": 1.0 if passed else 0.0,
+            "summary": "Final response was produced." if passed else "No final response was produced.",
+        },
+        "grader_context": {
+            "type": "local_deterministic",
+            "max_iterations": outcome["max_iterations"],
+            "rubric": outcome.get("rubric"),
+        },
+    }
+
+
+def _outcome_spec(payload: dict[str, Any]) -> dict[str, Any]:
+    objective = str(
+        payload.get("objective")
+        or payload.get("goal")
+        or payload.get("name")
+        or _text_from_payload(payload)
+        or "Complete the requested outcome."
+    )
+    rubric = payload.get("rubric") or payload.get("criteria") or payload.get("success_criteria")
+    try:
+        max_iterations = int(payload.get("max_iterations") or payload.get("max_turns") or 1)
+    except (TypeError, ValueError):
+        max_iterations = 1
+    if max_iterations < 1:
+        max_iterations = 1
+    return {
+        "objective": objective,
+        "rubric": rubric,
+        "max_iterations": max_iterations,
+    }
+
+
+def _outcome_prompt(payload: dict[str, Any]) -> str:
+    outcome = _outcome_spec(payload)
+    rubric = outcome.get("rubric")
+    if rubric:
+        return f"{outcome['objective']}\nRubric: {rubric}"
+    return outcome["objective"]
 
 
 def _text_from_payload(payload: dict[str, Any]) -> str:
