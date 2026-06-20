@@ -73,6 +73,7 @@ async def create_session(
     environment = await env_q.get_environment(db, body.environment_id)
     if environment is None or environment.deleted_at is not None or environment.archived_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
+    vault_ids = await _validate_session_vault_ids(db, body.vault_ids, workspace_id=agent.workspace_id)
 
     session = await sessions_q.create_session(
         db,
@@ -82,7 +83,7 @@ async def create_session(
         title=body.title,
         metadata=body.metadata,
         resources=[],
-        vault_ids=body.vault_ids,
+        vault_ids=vault_ids,
     )
     for resource_data in body.resources:
         await _create_session_resource(db, session, resource_data, allowed_types={"file", "github_repository", "memory_store"})
@@ -715,6 +716,28 @@ def _merge_metadata(current: dict, patch: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+async def _validate_session_vault_ids(
+    db: AsyncSession,
+    vault_ids: list[str],
+    *,
+    workspace_id: str,
+) -> list[str]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw_id in vault_ids:
+        vault_id = str(raw_id or "")
+        if not vault_id:
+            raise HTTPException(status_code=422, detail="vault_ids must not contain empty values")
+        if vault_id in seen:
+            continue
+        vault = await res_q.get_resource(db, resource_id=vault_id, resource_type="vault", workspace_id=workspace_id)
+        if vault is None or vault.archived_at is not None:
+            raise HTTPException(status_code=404, detail="Vault not found")
+        resolved.append(vault_id)
+        seen.add(vault_id)
+    return resolved
 
 
 async def _create_session_resource(

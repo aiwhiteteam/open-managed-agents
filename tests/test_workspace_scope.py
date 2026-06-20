@@ -170,6 +170,33 @@ async def test_api_keys_scope_generic_resource_families_to_workspaces(client, mo
     assert response.status_code == 200, response.text
     assert response.json()["data"] == []
 
+    response = await client.post(
+        "/v1/agents",
+        headers=headers_b,
+        json={"name": "Workspace B Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent_b = response.json()
+
+    response = await client.post(
+        "/v1/environments",
+        headers=headers_b,
+        json={"name": "workspace-b-env", "config": {"type": "self_hosted"}},
+    )
+    assert response.status_code == 201, response.text
+    environment_b = response.json()
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=headers_b,
+        json={
+            "agent": {"type": "agent", "id": agent_b["id"], "version": 1},
+            "environment_id": environment_b["id"],
+            "vault_ids": [vault["id"]],
+        },
+    )
+    assert response.status_code == 404
+
 
 async def test_create_app_accepts_hosted_auth_provider(monkeypatch):
     class HostedAuthProvider:

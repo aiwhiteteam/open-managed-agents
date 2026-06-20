@@ -121,6 +121,45 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     assert credential["vault_id"] == vault["id"]
 
     response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Vault Session Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "vault-session-env", "config": {"type": "self_hosted"}},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "vault_ids": [vault["id"], vault["id"]],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["vault_ids"] == [vault["id"]]
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "vault_ids": ["vault_missing"],
+        },
+    )
+    assert response.status_code == 404
+
+    response = await client.post(
         "/v1/memory_stores",
         headers=TEST_HEADERS,
         json={"name": "Customer memory"},

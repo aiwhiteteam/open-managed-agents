@@ -209,10 +209,12 @@ async def test_anthropic_sdk_session_contract():
             description="Session memory.",
             **BETA_KWARG,
         )
+        vault = await client.beta.vaults.create(display_name="SDK Session Vault", **BETA_KWARG)
 
         session = await client.beta.sessions.create(
             agent={"type": "agent", "id": agent.id, "version": agent.version},
             environment_id=environment.id,
+            vault_ids=[vault.id, vault.id],
             resources=[
                 {
                     "type": "file",
@@ -248,7 +250,7 @@ async def test_anthropic_sdk_session_contract():
         assert initial_resources_by_type["memory_store"].memory_store_id == memory_store.id
         assert initial_resources_by_type["memory_store"].access == "read_only"
         assert session.outcome_evaluations == []
-        assert session.vault_ids == []
+        assert session.vault_ids == [vault.id]
         assert session.stats is not None
         assert session.usage is not None
 
