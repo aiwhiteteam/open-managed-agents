@@ -110,6 +110,19 @@ async def test_anthropic_sdk_agent_crud_contract():
         listed = [item async for item in client.beta.agents.list(limit=20, **BETA_KWARG)]
         assert any(item.id == agent.id for item in listed)
 
+        reviewer = await client.beta.agents.create(name="SDK Reviewer Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
+        coordinator = await client.beta.agents.create(
+            name="SDK Coordinator Agent",
+            model={"id": "gpt-5.5"},
+            multiagent={"type": "coordinator", "agents": [reviewer.id, {"type": "self"}]},
+            **BETA_KWARG,
+        )
+        roster = [entry.model_dump() for entry in coordinator.multiagent.agents]
+        assert roster[0]["id"] == reviewer.id
+        assert roster[0]["version"] == reviewer.version
+        assert roster[1]["id"] == coordinator.id
+        assert roster[1]["version"] == coordinator.version
+
         archived = await client.beta.agents.archive(agent.id, **BETA_KWARG)
         assert archived.archived_at is not None
 

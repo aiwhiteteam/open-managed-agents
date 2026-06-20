@@ -253,7 +253,7 @@ async def test_multiagent_roster_pins_referenced_agent_versions(client):
             "multiagent": {
                 "type": "coordinator",
                 "agents": [
-                    {"type": "agent", "id": reviewer["id"]},
+                    reviewer["id"],
                     {"type": "self"},
                 ],
             },
@@ -262,6 +262,8 @@ async def test_multiagent_roster_pins_referenced_agent_versions(client):
     assert response.status_code == 201, response.text
     coordinator = response.json()
     assert coordinator["multiagent"]["agents"][0]["version"] == reviewer_v2["version"]
+    assert coordinator["multiagent"]["agents"][1]["id"] == coordinator["id"]
+    assert coordinator["multiagent"]["agents"][1]["version"] == coordinator["version"]
 
     response = await client.patch(
         f"/v1/agents/{reviewer['id']}",
@@ -288,6 +290,96 @@ async def test_multiagent_roster_pins_referenced_agent_versions(client):
     )
     assert response.status_code == 200, response.text
     assert response.json()["multiagent"]["agents"][0]["version"] == reviewer_v3["version"]
+
+
+async def test_multiagent_roster_contract_is_enforced(client):
+    reviewer = await _create_agent(client)
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Empty Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": []},
+        },
+    )
+    assert response.status_code == 422
+    assert "at least one" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Duplicate Self Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": [{"type": "self"}, {"type": "self"}]},
+        },
+    )
+    assert response.status_code == 422
+    assert "at most one self" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Duplicate Agent Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": [reviewer["id"], {"type": "agent", "id": reviewer["id"]}]},
+        },
+    )
+    assert response.status_code == 422
+    assert "distinct agents" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Bad Version Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": [{"type": "agent", "id": reviewer["id"], "version": 0}]},
+        },
+    )
+    assert response.status_code == 422
+    assert "at least 1" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Nested Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": [{"type": "self"}]},
+        },
+    )
+    assert response.status_code == 201, response.text
+    nested = response.json()
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Too Deep Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {"type": "coordinator", "agents": [nested["id"]]},
+        },
+    )
+    assert response.status_code == 422
+    assert "multiagent agent" in response.json()["error"]["message"]
+
+    response = await client.patch(
+        f"/v1/agents/{reviewer['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "version": reviewer["version"],
+            "multiagent": {
+                "type": "coordinator",
+                "agents": [{"type": "self"}, {"type": "agent", "id": reviewer["id"]}],
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert "distinct agents" in response.json()["error"]["message"]
 
 
 async def test_agent_mcp_servers_must_match_mcp_toolsets(client):

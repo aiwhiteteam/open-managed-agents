@@ -774,12 +774,18 @@ async def test_multiagent_session_creates_delegated_agent_threads(client):
     response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
     threads = response.json()["data"]
-    assert len(threads) == 2
-    primary, delegated = threads
+    assert len(threads) == 3
+    primary = threads[0]
+    delegated_by_agent_id = {thread["agent"]["id"]: thread for thread in threads[1:]}
+    delegated = delegated_by_agent_id[reviewer["id"]]
+    self_delegated = delegated_by_agent_id[coordinator["id"]]
     assert primary["agent"]["id"] == coordinator["id"]
     assert delegated["parent_thread_id"] == primary["id"]
     assert delegated["agent"]["id"] == reviewer["id"]
     assert delegated["agent"]["version"] == reviewer["version"]
+    assert self_delegated["parent_thread_id"] == primary["id"]
+    assert self_delegated["agent"]["id"] == coordinator["id"]
+    assert self_delegated["agent"]["version"] == coordinator["version"]
 
     response = await client.post(
         f"/v1/sessions/{session['id']}/threads/{delegated['id']}/archive",
@@ -810,7 +816,9 @@ async def test_delegated_thread_events_only_include_explicit_thread_events(clien
 
     response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
-    primary, delegated = response.json()["data"]
+    threads = response.json()["data"]
+    primary = threads[0]
+    delegated = next(thread for thread in threads[1:] if thread["agent"]["id"] == reviewer["id"])
 
     response = await client.post(
         f"/v1/sessions/{session['id']}/events",
