@@ -275,6 +275,18 @@ async def test_anthropic_sdk_session_contract():
         assert any(item.type == "session.status_idle" for item in events)
         assert any(item.type == "system.message" for item in events)
 
+        system_events = [
+            item
+            async for item in client.beta.sessions.events.list(
+                session.id,
+                types=["system.message"],
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert system_events
+        assert {item.type for item in system_events} == {"system.message"}
+
         uploaded = await client.beta.files.upload(
             file=("session-resource.txt", b"resource", "text/plain"),
             **BETA_KWARG,

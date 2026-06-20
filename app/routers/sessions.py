@@ -343,6 +343,8 @@ async def list_session_events(
     created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
     created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
+    types: list[str] | None = Query(default=None),
+    types_brackets: list[str] | None = Query(default=None, alias="types[]"),
     db: AsyncSession = Depends(get_session),
 ):
     session = await sessions_q.get_session(db, session_id)
@@ -356,6 +358,10 @@ async def list_session_events(
         created_at_lt=created_at_lt,
         created_at_lte=created_at_lte,
     )
+    requested_types = [*(types or []), *(types_brackets or [])]
+    if requested_types:
+        allowed_types = set(requested_types)
+        events = [event for event in events if event.type in allowed_types]
     if order == "desc":
         events = list(reversed(events))
     return paginate([event_to_response(e) for e in events], limit=limit, page=page)
