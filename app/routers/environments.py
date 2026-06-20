@@ -1,4 +1,6 @@
+import asyncio
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +17,7 @@ from app.models.environments import (
     EnvironmentUpdateRequest,
     environment_to_response,
 )
-from app.models.resources import GenericBody, resource_to_response
+from app.models.resources import GenericBody
 from app.pagination import paginate, sort_by_created_at
 from app.runtime.work_queue import WorkLeaseError, ack_work, heartbeat_work, lease_next_work, stop_work
 
@@ -137,7 +139,7 @@ async def list_environment_work(
         parent_id=environment_id,
         limit=1000,
     )
-    return paginate([resource_to_response(item, public_type="self_hosted_work") for item in work], limit=limit, page=page)
+    return paginate([_work_response(item) for item in work], limit=limit, page=page)
 
 
 @router.get("/{environment_id}/work/poll")
@@ -145,20 +147,26 @@ async def poll_environment_work(
     environment_id: str,
     worker_id: str = Query(default="anonymous"),
     lease_seconds: int = Query(default=60, ge=5, le=3600),
+    block_ms: int | None = Query(default=None, ge=1, le=999),
+    reclaim_older_than_ms: int | None = Query(default=None, ge=1),
+    anthropic_worker_id: str | None = Header(default=None, alias="Anthropic-Worker-ID"),
     _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
-    work = await lease_next_work(
+    worker = anthropic_worker_id or worker_id or "anonymous"
+    work = await _poll_next_work(
         db,
         environment_id=environment_id,
-        worker_id=worker_id,
+        worker_id=worker,
         lease_seconds=lease_seconds,
+        block_ms=block_ms,
+        reclaim_older_than_ms=reclaim_older_than_ms,
     )
     if work is None:
         return None
     await db.commit()
-    return resource_to_response(work, public_type="self_hosted_work")
+    return _work_response(work)
 
 
 @router.get("/{environment_id}/work/stats")
@@ -174,8 +182,7 @@ async def environment_work_stats(
         parent_id=environment_id,
         limit=1000,
     )
-    return {
-        "type": "self_hosted_work_queue_stats",
+    counters = {
         "environment_id": environment_id,
         "queued": len([w for w in queued if w.status == "queued"]),
         "leased": len([w for w in queued if w.status == "leased"]),
@@ -184,6 +191,15 @@ async def environment_work_stats(
         "completed": len([w for w in queued if w.status == "completed"]),
         "error": len([w for w in queued if w.status == "error"]),
         "stopped": len([w for w in queued if w.status == "stopped"]),
+    }
+    return {
+        "type": "work_queue_stats",
+        "depth": counters["queued"] + counters["rescheduling"],
+        "pending": counters["leased"] + counters["running"],
+        "oldest_queued_at": _oldest_queued_at(queued),
+        "workers_polling": None,
+        **counters,
+        "legacy_type": "self_hosted_work_queue_stats",
     }
 
 
@@ -196,7 +212,7 @@ async def retrieve_environment_work(
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    return resource_to_response(work, public_type="self_hosted_work")
+    return _work_response(work)
 
 
 @router.post("/{environment_id}/work/{work_id}")
@@ -210,10 +226,13 @@ async def update_environment_work(
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
     data = dict(work.data)
-    data.update(body.model_dump(mode="json"))
+    patch = body.model_dump(mode="json")
+    if "metadata" in patch:
+        data["metadata"] = _merge_metadata(data.get("metadata") or {}, patch.pop("metadata") or {})
+    data.update(patch)
     await res_q.update_resource(db, work, data=data, status=data.get("status", work.status))
     await db.commit()
-    return resource_to_response(work, public_type="self_hosted_work")
+    return _work_response(work)
 
 
 @router.post("/{environment_id}/work/{work_id}/ack")
@@ -221,58 +240,214 @@ async def ack_environment_work(
     environment_id: str,
     work_id: str,
     worker_id: str | None = Query(default=None),
+    anthropic_worker_id: str | None = Header(default=None, alias="Anthropic-Worker-ID"),
     _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
     try:
-        await ack_work(db, work, worker_id=worker_id)
+        await ack_work(db, work, worker_id=_worker_id_for_work(work, worker_id, anthropic_worker_id))
     except WorkLeaseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    return resource_to_response(work, public_type="self_hosted_work")
+    return _work_response(work)
 
 
 @router.post("/{environment_id}/work/{work_id}/heartbeat")
 async def heartbeat_environment_work(
     environment_id: str,
     work_id: str,
-    body: GenericBody,
+    body: GenericBody | None = None,
     worker_id: str | None = Query(default=None),
     lease_seconds: int = Query(default=60, ge=5, le=3600),
+    desired_ttl_seconds: int | None = Query(default=None, ge=1, le=3600),
+    expected_last_heartbeat: str | None = None,
+    anthropic_worker_id: str | None = Header(default=None, alias="Anthropic-Worker-ID"),
     _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
+    _check_heartbeat_precondition(work, expected_last_heartbeat)
+    ttl_seconds = desired_ttl_seconds or lease_seconds
     try:
         await heartbeat_work(
             db,
             work,
-            worker_id=worker_id,
-            lease_seconds=lease_seconds,
-            payload=body.model_dump(mode="json"),
+            worker_id=_worker_id_for_work(work, worker_id, anthropic_worker_id),
+            lease_seconds=ttl_seconds,
+            payload=body.model_dump(mode="json") if body is not None else {},
         )
     except WorkLeaseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
-    return resource_to_response(work, public_type="self_hosted_work")
+    data = work.data or {}
+    return {
+        "type": "work_heartbeat",
+        "last_heartbeat": data.get("last_heartbeat_at"),
+        "lease_extended": True,
+        "state": _work_state(work.status),
+        "ttl_seconds": ttl_seconds,
+        "payload": data.get("last_heartbeat") or {},
+        "work": _work_response(work),
+    }
 
 
 @router.post("/{environment_id}/work/{work_id}/stop")
 async def stop_environment_work(
     environment_id: str,
     work_id: str,
-    body: GenericBody,
+    body: GenericBody | None = None,
     _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
     work = await _must_get_work(db, environment_id, work_id)
-    await stop_work(db, work, payload=body.model_dump(mode="json"))
+    await stop_work(db, work, payload=body.model_dump(mode="json") if body is not None else {})
     await db.commit()
-    return resource_to_response(work, public_type="self_hosted_work")
+    return _work_response(work)
+
+
+async def _poll_next_work(
+    db: AsyncSession,
+    *,
+    environment_id: str,
+    worker_id: str,
+    lease_seconds: int,
+    block_ms: int | None,
+    reclaim_older_than_ms: int | None,
+):
+    deadline = None
+    if block_ms is not None:
+        deadline = datetime.now(timezone.utc) + timedelta(milliseconds=block_ms)
+
+    while True:
+        if reclaim_older_than_ms is not None:
+            await _expire_reclaimable_work(
+                db,
+                environment_id=environment_id,
+                reclaim_older_than_ms=reclaim_older_than_ms,
+            )
+        work = await lease_next_work(
+            db,
+            environment_id=environment_id,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+        )
+        if work is not None or deadline is None:
+            return work
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            return None
+        await asyncio.sleep(min(0.05, remaining))
+
+
+async def _expire_reclaimable_work(
+    db: AsyncSession,
+    *,
+    environment_id: str,
+    reclaim_older_than_ms: int,
+) -> None:
+    threshold = datetime.now(timezone.utc) - timedelta(milliseconds=reclaim_older_than_ms)
+    work_items = await res_q.list_resources(
+        db,
+        resource_type="environment_work",
+        parent_id=environment_id,
+        limit=1000,
+    )
+    for work in work_items:
+        if work.status not in {"leased", "running"}:
+            continue
+        data = dict(work.data or {})
+        lease = dict(data.get("lease") or {})
+        reference = _parse_datetime(data.get("last_heartbeat_at") or lease.get("leased_at"))
+        if reference is None or reference > threshold:
+            continue
+        lease["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        data["lease"] = lease
+        data["reclaim_older_than_ms"] = reclaim_older_than_ms
+        await res_q.update_resource(db, work, data=data)
+
+
+def _work_response(work) -> dict:
+    data = dict(work.data or {})
+    response = {
+        "id": work.id,
+        "type": "work",
+        "environment_id": work.parent_id,
+        "created_at": work.created_at,
+        "state": _work_state(work.status),
+        "data": {
+            "type": "session",
+            "id": str(data.get("session_id") or ""),
+        },
+        "metadata": _string_metadata(data.get("metadata") or {}),
+        "acknowledged_at": data.get("acked_at"),
+        "started_at": data.get("started_at"),
+        "latest_heartbeat_at": data.get("last_heartbeat_at"),
+        "stop_requested_at": data.get("stop_requested_at") or data.get("stopped_at"),
+        "stopped_at": data.get("stopped_at") or (data.get("finished_at") if work.status in {"completed", "error"} else None),
+        "status": work.status,
+        "legacy_type": "self_hosted_work",
+    }
+    for key, value in data.items():
+        response.setdefault(key, value)
+    return response
+
+
+def _work_state(status: str) -> str:
+    if status in {"queued", "rescheduling"}:
+        return "queued"
+    if status == "leased":
+        return "starting"
+    if status == "running":
+        return "active"
+    if status == "stopping":
+        return "stopping"
+    return "stopped"
+
+
+def _string_metadata(metadata: dict) -> dict[str, str]:
+    return {str(key): str(value) for key, value in metadata.items() if value is not None}
+
+
+def _worker_id_for_work(work, worker_id: str | None, anthropic_worker_id: str | None) -> str | None:
+    if worker_id:
+        return worker_id
+    if anthropic_worker_id:
+        return anthropic_worker_id
+    lease = (work.data or {}).get("lease") or {}
+    lease_worker_id = lease.get("worker_id")
+    return str(lease_worker_id) if lease_worker_id else None
+
+
+def _check_heartbeat_precondition(work, expected_last_heartbeat: str | None) -> None:
+    if expected_last_heartbeat is None:
+        return
+    last_heartbeat = (work.data or {}).get("last_heartbeat_at")
+    if expected_last_heartbeat == "NO_HEARTBEAT":
+        if last_heartbeat:
+            raise HTTPException(status_code=412, detail="Heartbeat precondition failed")
+        return
+    if str(last_heartbeat or "") != expected_last_heartbeat:
+        raise HTTPException(status_code=412, detail="Heartbeat precondition failed")
+
+
+def _oldest_queued_at(work_items: list) -> datetime | None:
+    queued = [work.created_at for work in work_items if work.status in {"queued", "rescheduling"}]
+    return min(queued) if queued else None
+
+
+def _parse_datetime(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 async def _must_get_environment(db: AsyncSession, environment_id: str):

@@ -113,7 +113,8 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
         json={"progress": 0.5},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["last_heartbeat"]["progress"] == 0.5
+    assert response.json()["payload"]["progress"] == 0.5
+    assert response.json()["state"] == "active"
 
     response = await client.post(
         f"/v1/environments/{environment['id']}/work/{work['id']}/heartbeat",

@@ -197,6 +197,82 @@ async def test_anthropic_sdk_environment_contract():
         assert deleted.type == "environment_deleted"
 
 
+async def test_anthropic_sdk_environment_work_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(name="SDK Work Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
+        environment = await client.beta.environments.create(
+            name="SDK Work Environment",
+            config={"type": "self_hosted"},
+            **BETA_KWARG,
+        )
+        session = await client.beta.sessions.create(
+            agent={"type": "agent", "id": agent.id, "version": agent.version},
+            environment_id=environment.id,
+            **BETA_KWARG,
+        )
+        await client.beta.sessions.events.send(
+            session.id,
+            events=[{"type": "user.message", "content": [{"type": "text", "text": "Queue work."}]}],
+            **BETA_KWARG,
+        )
+
+        work = await client.beta.environments.work.poll(
+            environment.id,
+            anthropic_worker_id="sdk-worker-1",
+            block_ms=1,
+            reclaim_older_than_ms=5000,
+            **BETA_KWARG,
+        )
+        assert work is not None
+        assert work.type == "work"
+        assert work.state == "starting"
+        assert work.environment_id == environment.id
+        assert work.data.type == "session"
+        assert work.data.id == session.id
+
+        listed_work = [item async for item in client.beta.environments.work.list(environment.id, limit=20, **BETA_KWARG)]
+        assert any(item.id == work.id for item in listed_work)
+
+        retrieved_work = await client.beta.environments.work.retrieve(work.id, environment_id=environment.id, **BETA_KWARG)
+        assert retrieved_work.id == work.id
+
+        updated_work = await client.beta.environments.work.update(
+            work.id,
+            environment_id=environment.id,
+            metadata={"phase": "sdk"},
+            **BETA_KWARG,
+        )
+        assert updated_work.metadata["phase"] == "sdk"
+
+        acked_work = await client.beta.environments.work.ack(work.id, environment_id=environment.id, **BETA_KWARG)
+        assert acked_work.state == "active"
+
+        heartbeat = await client.beta.environments.work.heartbeat(
+            work.id,
+            environment_id=environment.id,
+            desired_ttl_seconds=30,
+            expected_last_heartbeat="NO_HEARTBEAT",
+            **BETA_KWARG,
+        )
+        assert heartbeat.type == "work_heartbeat"
+        assert heartbeat.state == "active"
+        assert heartbeat.lease_extended is True
+        assert heartbeat.ttl_seconds == 30
+        assert heartbeat.last_heartbeat is not None
+
+        stats = await client.beta.environments.work.stats(environment.id, **BETA_KWARG)
+        assert stats.type == "work_queue_stats"
+        assert stats.pending >= 1
+
+        stopped_work = await client.beta.environments.work.stop(
+            work.id,
+            environment_id=environment.id,
+            force=True,
+            **BETA_KWARG,
+        )
+        assert stopped_work.state == "stopped"
+
+
 async def test_anthropic_sdk_session_contract():
     async with anthropic_client() as (client, _):
         agent = await client.beta.agents.create(name="SDK Session Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
