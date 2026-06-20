@@ -10,8 +10,11 @@ Object storage is not the source of truth for memory records. S3-compatible stor
 - `memory` rows store structured records with `path`, `path_key`, `content`, metadata, and the current optimistic `version`.
 - `memory_version` rows store version snapshots with actor and operation metadata.
 - Paths are unique inside a memory store.
+- Individual memory content is capped at 100KB, and each store is capped at 2000 live memories.
 - Updates may pass `if_version` or `expected_version`; stale values return `409`.
-- Redaction removes the snapshot `content` from the targeted memory version. If the latest version is redacted, the current memory content is removed too.
+- Every create, update, and delete creates an immutable memory version; versions survive after their memory is deleted.
+- Redaction removes the snapshot `content` from the targeted memory version. The current live head version cannot be redacted.
+- Archived stores remain readable, but reject writes and cannot be attached to new sessions.
 
 ## Path Examples
 

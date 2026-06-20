@@ -160,6 +160,19 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
         f"/v1/memory_stores/{store['id']}/memory_versions/{memory_version['id']}/redact",
         headers=TEST_HEADERS,
     )
+    assert response.status_code == 409
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={"content": "replacement preference"},
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memory_versions/{memory_version['id']}/redact",
+        headers=TEST_HEADERS,
+    )
     assert response.status_code == 200, response.text
     redacted = response.json()
     assert redacted["redacted"] is True
@@ -171,8 +184,121 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     )
     assert response.status_code == 200, response.text
     current_memory = response.json()
-    assert current_memory["redacted"] is True
-    assert "content" not in current_memory
+    assert current_memory["content"] == "replacement preference"
+
+
+async def test_memory_delete_creates_surviving_deleted_version(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "customers/acme", "content": "delete me"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.delete(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions",
+        headers=TEST_HEADERS,
+        params={"memory_id": memory["id"]},
+    )
+    assert response.status_code == 200, response.text
+    versions = response.json()["data"]
+    assert [version["operation"] for version in versions] == ["deleted", "created"]
+    assert versions[0]["content"] == "delete me"
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memory_versions/{versions[0]['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["operation"] == "deleted"
+
+
+async def test_memory_store_write_limits(client):
+    store = await _create_store(client)
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "too-large", "content": "x" * (100 * 1024 + 1)},
+    )
+    assert response.status_code == 413
+
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with session_scope() as db:
+        db.add_all(
+            _memory_resource(store["id"], f"item/{index}", base_time + timedelta(seconds=index))
+            for index in range(2000)
+        )
+        await db.commit()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "overflow", "content": "overflow"},
+    )
+    assert response.status_code == 409
+
+
+async def test_archived_memory_store_is_read_only_and_not_attachable(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "customers/acme", "content": "read only"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.post(f"/v1/memory_stores/{store['id']}/archive", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "customers/new", "content": "blocked"},
+    )
+    assert response.status_code == 409
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Memory Attach Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "memory-attach-env", "config": {"type": "cloud"}},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": agent["version"]},
+            "environment_id": environment["id"],
+            "resources": [{"type": "memory_store", "memory_store_id": store["id"]}],
+        },
+    )
+    assert response.status_code == 404
 
 
 async def test_memory_version_retrieve_requires_matching_store(client):

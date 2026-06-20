@@ -90,7 +90,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Memory Stores
 
 - Extract Memory Store routes into typed request/response models instead of the current generic-resource compatibility layer.
-- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`.
+- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. Memory content size, per-store count limits, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
 - Add semantic search/vector indexing if memories need retrieval beyond exact path and prefix lookup.
 - Keep mounted memory stores integrated into the runtime context builder. Full semantic/vector retrieval tools remain TODO.
 

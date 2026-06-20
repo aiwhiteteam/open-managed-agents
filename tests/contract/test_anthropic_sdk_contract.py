@@ -1000,7 +1000,7 @@ async def test_anthropic_sdk_memory_stores_contract():
         assert retrieved_version.id == versions[0].id
 
         redacted_version = await client.beta.memory_stores.memory_versions.redact(
-            versions[0].id,
+            versions[1].id,
             memory_store_id=store.id,
             **BETA_KWARG,
         )
@@ -1014,6 +1014,26 @@ async def test_anthropic_sdk_memory_stores_contract():
         )
         assert deleted_memory.id == memory.id
         assert deleted_memory.type == "memory_deleted"
+
+        post_delete_versions = [
+            item
+            async for item in client.beta.memory_stores.memory_versions.list(
+                store.id,
+                memory_id=memory.id,
+                view="full",
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert [item.operation for item in post_delete_versions] == ["deleted", "modified", "created"]
+        assert post_delete_versions[0].content == updated_content
+        retrieved_deleted_version = await client.beta.memory_stores.memory_versions.retrieve(
+            post_delete_versions[0].id,
+            memory_store_id=store.id,
+            view="full",
+            **BETA_KWARG,
+        )
+        assert retrieved_deleted_version.operation == "deleted"
 
         stores = [item async for item in client.beta.memory_stores.list(limit=20, **BETA_KWARG)]
         assert any(item.id == store.id for item in stores)

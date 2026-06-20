@@ -32,6 +32,9 @@ RESOURCE_CONFIG = {
     "user_profiles": ("user_profile", "user_profile"),
 }
 
+MAX_MEMORIES_PER_STORE = 2000
+MAX_MEMORY_CONTENT_BYTES = 100 * 1024
+
 
 @router.post("/v1/vaults", status_code=201)
 async def create_vault(body: GenericBody, db: AsyncSession = Depends(get_session)):
@@ -205,7 +208,8 @@ async def create_memory(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_exist(db, memory_store_id, "memory_store")
+    await _must_write_memory_store(db, memory_store_id)
+    await _ensure_memory_store_capacity(db, memory_store_id)
     data = _memory_payload(body.model_dump(mode="json"))
     existing = await _find_memory_by_path(db, memory_store_id, data["path_key"])
     if existing is not None:
@@ -329,7 +333,25 @@ async def update_memory(
 
 @router.delete("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
 async def delete_memory(memory_store_id: str, memory_id: str, db: AsyncSession = Depends(get_session)):
-    return await _delete(db, memory_id, "memory", "memory_deleted", parent_id=memory_store_id)
+    await _must_write_memory_store(db, memory_store_id)
+    memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
+    data = dict(memory.data or {})
+    data["version"] = int(data.get("version") or 1) + 1
+    data["updated_by"] = str(data.get("updated_by") or "api")
+    data["updated_at"] = utcnow().isoformat()
+    version_resource = await _create_memory_version(
+        db,
+        memory,
+        version=int(data["version"]),
+        actor=data["updated_by"],
+        operation="deleted",
+        data=data,
+    )
+    data["memory_version_id"] = version_resource.id
+    await res_q.update_resource(db, memory, data=data)
+    await res_q.delete_resource(db, memory)
+    await db.commit()
+    return deleted_response(memory, public_type="memory_deleted")
 
 
 @router.get("/v1/memory_stores/{memory_store_id}/memories/{memory_id}/versions")
@@ -376,7 +398,13 @@ async def list_memory_versions(
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_store_id, "memory_store")
-    memories = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
+    memories = await res_q.list_resources(
+        db,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        limit=MAX_MEMORIES_PER_STORE + 100,
+        include_deleted=True,
+    )
     versions = []
     for memory in memories:
         if memory_id is not None and memory.id != memory_id:
@@ -401,7 +429,15 @@ async def retrieve_memory_version(
     version = await res_q.get_resource(db, resource_id=memory_version_id, resource_type="memory_version")
     if version is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
-    await _must_exist(db, version.parent_id, "memory", parent_id=memory_store_id)
+    memory = await res_q.get_resource(
+        db,
+        resource_id=version.parent_id,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        include_deleted=True,
+    )
+    if memory is None:
+        raise HTTPException(status_code=404, detail="Memory version not found")
     return _resource_response(version)
 
 
@@ -415,8 +451,21 @@ async def redact_memory_version(
     version = await res_q.get_resource(db, resource_id=memory_version_id, resource_type="memory_version")
     if version is None:
         raise HTTPException(status_code=404, detail="Memory version not found")
-    memory = await _must_exist(db, version.parent_id, "memory", parent_id=memory_store_id)
+    memory = await res_q.get_resource(
+        db,
+        resource_id=version.parent_id,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        include_deleted=True,
+    )
+    if memory is None:
+        raise HTTPException(status_code=404, detail="Memory version not found")
     data = dict(version.data)
+    if memory.deleted_at is None and (
+        memory.data.get("memory_version_id") == version.id
+        or int(memory.data.get("version") or 0) == int(version.version or data.get("memory_version") or 0)
+    ):
+        raise HTTPException(status_code=409, detail="Current live memory version cannot be redacted")
     snapshot = dict(data.get("snapshot") or {})
     snapshot.pop("content", None)
     snapshot["redacted"] = True
@@ -424,7 +473,7 @@ async def redact_memory_version(
     data["redacted"] = True
     data["redacted_at"] = utcnow().isoformat()
     await res_q.update_resource(db, version, data=data)
-    if memory.data.get("version") == data.get("memory_version"):
+    if memory.deleted_at is None and memory.data.get("version") == data.get("memory_version"):
         memory_data = dict(memory.data)
         memory_data.pop("content", None)
         memory_data["redacted"] = True
@@ -1055,6 +1104,7 @@ def _memory_payload(data: dict[str, Any]) -> dict[str, Any]:
     memory["path"] = path
     memory["path_key"] = _path_key(path)
     memory["content"] = "" if memory.get("content") is None else str(memory.get("content"))
+    _enforce_memory_content_limit(memory["content"])
     memory.update(_content_metadata(memory["content"]))
     memory["version"] = 1
     memory["created_by"] = actor
@@ -1083,6 +1133,7 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
             merged[key] = value
     if "content" in update:
         content = "" if merged.get("content") is None else str(merged.get("content"))
+        _enforce_memory_content_limit(content)
         merged["content"] = content
         merged.update(_content_metadata(content))
     merged["version"] = int(merged.get("version") or 1) + 1
@@ -1090,6 +1141,29 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
     merged["updated_at"] = utcnow().isoformat()
     merged.setdefault("metadata", {})
     return merged
+
+
+async def _must_write_memory_store(db: AsyncSession, memory_store_id: str):
+    store = await _must_exist(db, memory_store_id, "memory_store")
+    if store.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Memory store is archived")
+    return store
+
+
+async def _ensure_memory_store_capacity(db: AsyncSession, memory_store_id: str) -> None:
+    memories = await res_q.list_resources(
+        db,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        limit=MAX_MEMORIES_PER_STORE + 1,
+    )
+    if len(memories) >= MAX_MEMORIES_PER_STORE:
+        raise HTTPException(status_code=409, detail="Memory store has reached the 2000 memory limit")
+
+
+def _enforce_memory_content_limit(content: str) -> None:
+    if len(content.encode("utf-8")) > MAX_MEMORY_CONTENT_BYTES:
+        raise HTTPException(status_code=413, detail="Memory content exceeds maximum size of 102400 bytes")
 
 
 async def _find_memory_by_path(db: AsyncSession, memory_store_id: str, path_key: str):
@@ -1108,8 +1182,10 @@ async def _create_memory_version(
     version: int,
     actor: str,
     operation: str,
+    data: dict[str, Any] | None = None,
 ):
-    snapshot = _memory_snapshot(memory.data)
+    version_data = data or memory.data
+    snapshot = _memory_snapshot(version_data)
     return await res_q.create_resource(
         db,
         resource_type="memory_version",
@@ -1119,8 +1195,8 @@ async def _create_memory_version(
             "memory_store_id": memory.parent_id,
             "memory_id": memory.id,
             "memory_version": version,
-            "path": memory.data.get("path"),
-            "path_key": memory.data.get("path_key"),
+            "path": version_data.get("path"),
+            "path_key": version_data.get("path_key"),
             "content": snapshot.get("content"),
             "content_sha256": snapshot.get("content_sha256"),
             "content_size_bytes": snapshot.get("content_size_bytes"),

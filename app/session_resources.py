@@ -336,6 +336,8 @@ async def _normalize_memory_store_session_resource(
     store = await res_q.get_resource(db, resource_id=memory_store_id, resource_type="memory_store", workspace_id=workspace_id)
     if store is None:
         raise HTTPException(status_code=404, detail="Memory store not found")
+    if store.archived_at is not None:
+        raise HTTPException(status_code=404, detail="Memory store not found")
     access = str(data.get("access") or "read_write")
     if access not in {"read_write", "read_only"}:
         raise HTTPException(status_code=422, detail="memory_store access must be read_write or read_only")

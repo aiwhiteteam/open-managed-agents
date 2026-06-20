@@ -219,18 +219,20 @@ async def list_resources(
     parent_id: str | None = None,
     limit: int = 50,
     include_archived: bool = True,
+    include_deleted: bool = False,
     workspace_id: str | None = None,
 ) -> list[ManagedResource]:
     stmt = (
         select(ManagedResource)
         .where(
             ManagedResource.resource_type == resource_type,
-            ManagedResource.deleted_at.is_(None),
             ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
         )
         .order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
         .limit(limit)
     )
+    if not include_deleted:
+        stmt = stmt.where(ManagedResource.deleted_at.is_(None))
     if parent_id is not None:
         stmt = stmt.where(ManagedResource.parent_id == parent_id)
     if not include_archived:
