@@ -1444,6 +1444,13 @@ def _raw_get(value, key: str) -> Any:
 def _safe_state(result) -> dict[str, Any] | None:
     try:
         state = result.to_state()
+        if hasattr(state, "to_json"):
+            payload = state.to_json()
+            return {
+                "format": "openai_agents_sdk_run_state",
+                "schema_version": payload.get("$schemaVersion") if isinstance(payload, dict) else None,
+                "payload": payload,
+            }
         if hasattr(state, "model_dump"):
             return state.model_dump(mode="json")
         return {"repr": repr(state)}

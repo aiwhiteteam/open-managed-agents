@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.runtime.runner import RuntimeResult, _is_required_action_event, _map_openai_stream_event
+from app.runtime.runner import RuntimeResult, _is_required_action_event, _map_openai_stream_event, _safe_state
 
 
 def _run_item_event(name: str, raw_item: dict, **item_attrs):
@@ -131,3 +131,33 @@ def test_implicit_local_required_action_keeps_existing_blocking_behavior():
         result.tool_events[0],
         explicit_confirmation_events=False,
     ) is True
+
+
+def test_safe_state_prefers_openai_agents_sdk_json_snapshot():
+    sdk_payload = {"$schemaVersion": "1.11", "current_turn": 1}
+
+    class State:
+        def to_json(self):
+            return sdk_payload
+
+    class Result:
+        def to_state(self):
+            return State()
+
+    assert _safe_state(Result()) == {
+        "format": "openai_agents_sdk_run_state",
+        "schema_version": "1.11",
+        "payload": sdk_payload,
+    }
+
+
+def test_safe_state_keeps_model_dump_fallback():
+    class State:
+        def model_dump(self, *, mode):
+            return {"mode": mode, "legacy": True}
+
+    class Result:
+        def to_state(self):
+            return State()
+
+    assert _safe_state(Result()) == {"mode": "json", "legacy": True}

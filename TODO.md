@@ -9,7 +9,7 @@ Use [docs/claude-managed-agents-alignment.md](./docs/claude-managed-agents-align
 These are not just route coverage gaps. They are semantic contracts that can become expensive to fix later if core data models or runtime state machines drift away from Claude Managed Agents.
 
 - Keep exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core resolves every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
-- Complete durable session state machine semantics: transient runtime failures now enter `rescheduling` with retry windows and capped attempts; real durable queue execution and persisted OpenAI Agents SDK resume state remain TODO.
+- Complete durable session state machine semantics: transient runtime failures now enter `rescheduling` with retry windows and capped attempts; real durable queue execution and OpenAI Agents SDK snapshot resume execution remain TODO.
 - Wire `requires_action` pauses for custom tools and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
 - Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
@@ -46,7 +46,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Runtime Semantics
 
 - Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub deployment and fencing locks.
-- Implement true resumable OpenAI Agents SDK `RunState` persistence.
+- Implement true resumable OpenAI Agents SDK `RunState` continuation. SDK `RunState.to_json()` snapshots are persisted when available, but reconstructing the agent and resuming through `RunState.from_json()` is still TODO.
 - Keep expanding OpenAI Agents SDK stream mapping. Run-item events for messages, tool calls/results, MCP approvals, reasoning, handoffs, and agent updates have local coverage; raw response deltas and the exact full Claude event union remain TODO.
 - Keep expanding runtime integration tests. API-level session turn coverage exists for a mocked OpenAI-compatible runtime and provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers; wire-level mocked OpenAI SDK HTTP endpoint coverage remains TODO.
 - Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
