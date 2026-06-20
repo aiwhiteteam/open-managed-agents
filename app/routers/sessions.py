@@ -15,6 +15,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse
 from app.models.events import (
     SendEventsRequest,
@@ -87,7 +88,7 @@ async def create_session(
         agent_version=agent_version.version,
         environment=environment,
         title=body.title,
-        metadata=body.metadata,
+        metadata=normalize_metadata(body.metadata),
         resources=[],
         vault_ids=vault_ids,
     )
@@ -193,7 +194,7 @@ async def update_session(
         db,
         session,
         title=body.title,
-        metadata=_merge_metadata(session.metadata_, body.metadata) if body.metadata is not None else None,
+        metadata=merge_metadata(session.metadata_, body.metadata) if body.metadata is not None else None,
         status_details=status_details,
     )
     response = await _session_response(db, session)
@@ -751,16 +752,6 @@ def _session_agent_snapshot(version, details: dict[str, Any]) -> dict[str, Any]:
         "skills": version.skills,
         "multiagent": version.multiagent,
     }
-
-
-def _merge_metadata(current: dict, patch: dict) -> dict:
-    merged = dict(current or {})
-    for key, value in (patch or {}).items():
-        if value is None or value == "":
-            merged.pop(key, None)
-        else:
-            merged[key] = value
-    return merged
 
 
 async def _validate_session_vault_ids(

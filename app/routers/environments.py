@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import environments as env_q
 from app.db.queries import resources as res_q
+from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse
 from app.models.environments import (
     EnvironmentCreateRequest,
@@ -40,7 +41,7 @@ async def create_environment(
         name=body.name,
         config=environment_config_with_scope(body.config, body.scope),
         description=body.description,
-        metadata=body.metadata,
+        metadata=normalize_metadata(body.metadata),
     )
     await db.commit()
     return environment_to_response(environment)
@@ -90,7 +91,7 @@ async def update_environment(
         name=body.name,
         config=config,
         description=body.description,
-        metadata=_merge_metadata(environment.metadata_, body.metadata) if body.metadata is not None else None,
+        metadata=merge_metadata(environment.metadata_, body.metadata) if body.metadata is not None else None,
     )
     await db.commit()
     return environment_to_response(environment)
@@ -235,7 +236,7 @@ async def update_environment_work(
     data = dict(work.data)
     patch = body.model_dump(mode="json")
     if "metadata" in patch:
-        data["metadata"] = _merge_metadata(data.get("metadata") or {}, patch.pop("metadata") or {})
+        data["metadata"] = merge_metadata(_string_metadata(data.get("metadata") or {}), patch.pop("metadata") or {})
     data.update(patch)
     await res_q.update_resource(db, work, data=data, status=data.get("status", work.status))
     await db.commit()
@@ -474,13 +475,3 @@ async def _must_get_work(db: AsyncSession, environment_id: str, work_id: str):
     if work is None:
         raise HTTPException(status_code=404, detail="Environment work item not found")
     return work
-
-
-def _merge_metadata(current: dict, patch: dict) -> dict:
-    merged = dict(current or {})
-    for key, value in (patch or {}).items():
-        if value is None or value == "":
-            merged.pop(key, None)
-        else:
-            merged[key] = value
-    return merged

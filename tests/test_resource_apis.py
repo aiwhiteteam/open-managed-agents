@@ -203,6 +203,33 @@ async def test_skill_upload_content_scan_rejects_eicar_signature(client):
     assert "content scan" in response.json()["error"]["message"]
 
 
+async def test_generic_resource_metadata_limits_are_enforced(client):
+    response = await client.post(
+        "/v1/vaults",
+        headers=TEST_HEADERS,
+        json={"display_name": "Too Much Metadata", "metadata": {f"k{index}": "v" for index in range(17)}},
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/memory_stores",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Limited Metadata Store",
+            "metadata": {f"k{index}": "v" for index in range(16)},
+        },
+    )
+    assert response.status_code == 201, response.text
+    store = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}",
+        headers=TEST_HEADERS,
+        json={"metadata": {"extra": "v"}},
+    )
+    assert response.status_code == 422
+
+
 async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         "/v1/vaults",

@@ -19,6 +19,7 @@ Current passing coverage:
 - Managed Agents beta SDK surface discovery.
 - `client.beta.agents.create/retrieve/update/list/archive`.
 - `client.beta.agents.retrieve(version=...)` and `client.beta.agents.versions.list`.
+- Metadata merge/delete behavior and bag limits for agents and representative generic resources.
 - `client.beta.environments.create/retrieve/update/list/archive/delete`, including self-hosted `scope`.
 - `client.beta.environments.work.poll/list/retrieve/update/ack/heartbeat/stats/stop`.
 - `client.beta.sessions.create/retrieve/update/list/archive/delete`, including `deployment_id` filtering.

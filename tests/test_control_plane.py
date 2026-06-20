@@ -91,6 +91,64 @@ async def test_agent_update_rejects_stale_version(client):
     assert response.status_code == 409
 
 
+async def test_agent_metadata_limits_are_enforced(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Too Much Metadata",
+            "model": {"id": "gpt-5.5"},
+            "metadata": {f"k{index}": "v" for index in range(17)},
+        },
+    )
+    assert response.status_code == 422
+    assert "at most 16 keys" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Long Metadata Key", "model": {"id": "gpt-5.5"}, "metadata": {"x" * 65: "v"}},
+    )
+    assert response.status_code == 422
+    assert "at most 64 characters" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Long Metadata Value", "model": {"id": "gpt-5.5"}, "metadata": {"key": "v" * 513}},
+    )
+    assert response.status_code == 422
+    assert "at most 512 characters" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Non String Metadata", "model": {"id": "gpt-5.5"}, "metadata": {"key": 1}},
+    )
+    assert response.status_code == 422
+    assert "values must be strings" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Full Metadata",
+            "model": {"id": "gpt-5.5"},
+            "metadata": {f"k{index}": "v" for index in range(16)},
+        },
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    response = await client.patch(
+        f"/v1/agents/{agent['id']}",
+        headers=TEST_HEADERS,
+        json={"version": agent["version"], "metadata": {"extra": "v"}},
+    )
+    assert response.status_code == 422
+    assert "at most 16 keys" in response.json()["error"]["message"]
+
+
 async def test_multiagent_roster_pins_referenced_agent_versions(client):
     reviewer = await _create_agent(client)
 

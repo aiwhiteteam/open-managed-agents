@@ -8,6 +8,7 @@ from app.auth import require_api_access
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
 from app.db.queries import resources as res_q
+from app.metadata import merge_metadata, normalize_metadata
 from app.models.agents import (
     AgentCreateRequest,
     AgentResponse,
@@ -44,7 +45,7 @@ async def create_agent(
         mcp_servers=body.mcp_servers,
         skills=skills,
         multiagent=multiagent,
-        metadata=body.metadata,
+        metadata=normalize_metadata(body.metadata),
         runtime=body.runtime,
     )
     await db.commit()
@@ -318,11 +319,7 @@ def _merge_agent_update(active, agent, update: dict) -> dict:
     if "multiagent" in update:
         multiagent = update["multiagent"]
     if "metadata" in update:
-        for key, value in (update["metadata"] or {}).items():
-            if value == "":
-                metadata.pop(key, None)
-            else:
-                metadata[key] = value
+        metadata = merge_metadata(metadata, update["metadata"])
     if "runtime" in update:
         runtime = update["runtime"] or {}
 

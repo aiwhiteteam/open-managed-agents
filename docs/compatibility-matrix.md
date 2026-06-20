@@ -10,7 +10,7 @@ This MVP targets Claude Managed Agents-shaped wire and lifecycle compatibility, 
 | Agent create/list/retrieve | Implemented | Flexible JSON config fields, including official SDK `retrieve(version=...)`. |
 | Agent update version guard | Implemented | Requires current `version`; stale writes return 409. |
 | Agent no-op update detection | Implemented | Existing version is returned. |
-| Agent metadata merge/delete | Implemented | Empty string deletes a key. |
+| Metadata bags | Implemented | Agents, sessions, environments, vaults, credentials, memory stores, deployments, and user profiles enforce 16 keys, 64-character keys, and 512-character values. Create requires string values; update merges by key and deletes with `null` or empty string where supported by the SDK request shape. |
 | Multiagent roster pinning | Implemented | Coordinator rosters resolve unversioned agent references to the referenced agent's active version at create/update time. |
 | MCP server/toolset declaration validation | Implemented | Rejects unreferenced MCP servers and dangling `mcp_toolset` references. Runtime context matches session vault credentials by MCP URL and emits non-terminal missing-auth session errors; real MCP connection/OAuth refresh is still partial. |
 | Agent archive | Implemented | Blocks new sessions; existing sessions can continue. |

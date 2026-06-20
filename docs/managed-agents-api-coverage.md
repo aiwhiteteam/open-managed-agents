@@ -15,6 +15,12 @@ Status legend:
 - `stub`: route exists as a compatibility placeholder.
 - `todo`: not implemented.
 
+Cross-resource metadata contract:
+
+- Metadata bags enforce 16 keys, 64-character keys, and 512-character values.
+- Create requests require string metadata values.
+- Update requests merge metadata by key. `null` and empty string delete a key for routes whose SDK request shape permits them.
+
 ## Agents
 
 | Operation | Route | Status |

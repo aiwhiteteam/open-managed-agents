@@ -17,6 +17,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 from app.pagination import filter_created_at, paginate, sort_by_created_at
@@ -40,7 +41,7 @@ MAX_MEMORY_PATH_BYTES = 1024
 
 @router.post("/v1/vaults", status_code=201)
 async def create_vault(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "vault", _normalize_vault_data(body.model_dump(mode="json")))
+    return await _create_top_level(db, "vault", body.model_dump(mode="json"))
 
 
 @router.get("/v1/vaults")
@@ -60,7 +61,7 @@ async def retrieve_vault(vault_id: str, db: AsyncSession = Depends(get_session))
 
 @router.post("/v1/vaults/{vault_id}")
 async def update_vault(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _update(db, vault_id, "vault", _normalize_vault_data(body.model_dump(mode="json")))
+    return await _update(db, vault_id, "vault", body.model_dump(mode="json"))
 
 
 @router.delete("/v1/vaults/{vault_id}")
@@ -76,7 +77,7 @@ async def archive_vault(vault_id: str, db: AsyncSession = Depends(get_session)):
 @router.post("/v1/vaults/{vault_id}/credentials", status_code=201)
 async def create_credential(vault_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
     await _must_exist(db, vault_id, "vault")
-    return await _create_child(db, "credential", vault_id, _normalize_credential_data(body.model_dump(mode="json")))
+    return await _create_child(db, "credential", vault_id, body.model_dump(mode="json"))
 
 
 @router.get("/v1/vaults/{vault_id}/credentials")
@@ -107,7 +108,7 @@ async def update_credential(
         db,
         credential_id,
         "credential",
-        _normalize_credential_data(body.model_dump(mode="json")),
+        body.model_dump(mode="json"),
         parent_id=vault_id,
     )
 
@@ -155,7 +156,7 @@ def _credential_validation_payload(credential, *, vault_id: str) -> dict[str, An
 
 @router.post("/v1/memory_stores", status_code=201)
 async def create_memory_store(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "memory_store", _normalize_memory_store_data(body.model_dump(mode="json")))
+    return await _create_top_level(db, "memory_store", body.model_dump(mode="json"))
 
 
 @router.get("/v1/memory_stores")
@@ -190,7 +191,7 @@ async def update_memory_store(memory_store_id: str, body: GenericBody, db: Async
         db,
         memory_store_id,
         "memory_store",
-        _normalize_memory_store_data(body.model_dump(mode="json")),
+        body.model_dump(mode="json"),
     )
 
 
@@ -680,7 +681,7 @@ async def retrieve_deployment_run(deployment_run_id: str, db: AsyncSession = Dep
 
 @router.post("/v1/user_profiles", status_code=201)
 async def create_user_profile(body: GenericBody, db: AsyncSession = Depends(get_session)):
-    return await _create_top_level(db, "user_profile", _normalize_user_profile_data(body.model_dump(mode="json")))
+    return await _create_top_level(db, "user_profile", body.model_dump(mode="json"))
 
 
 @router.get("/v1/user_profiles")
@@ -704,7 +705,7 @@ async def update_user_profile(user_profile_id: str, body: GenericBody, db: Async
         db,
         user_profile_id,
         "user_profile",
-        _normalize_user_profile_data(body.model_dump(mode="json")),
+        body.model_dump(mode="json"),
     )
 
 
@@ -870,11 +871,11 @@ async def _update(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
-    data = _normalize_resource_data(resource_type, data)
+    data = _normalize_resource_data(resource_type, _merge_data(resource.data, data))
     await res_q.update_resource(
         db,
         resource,
-        data=_merge_data(resource.data, data),
+        data=data,
         name=data.get("name") or data.get("display_name") or data.get("display_title") or resource.name,
     )
     await db.commit()
@@ -933,14 +934,8 @@ async def _must_exist(
 def _merge_data(existing: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
     merged = dict(existing or {})
     for key, value in update.items():
-        if key == "metadata" and isinstance(value, dict):
-            metadata = dict(merged.get("metadata") or {})
-            for metadata_key, metadata_value in value.items():
-                if metadata_value is None or metadata_value == "":
-                    metadata.pop(metadata_key, None)
-                else:
-                    metadata[metadata_key] = metadata_value
-            merged["metadata"] = metadata
+        if key == "metadata":
+            merged["metadata"] = merge_metadata(merged.get("metadata") or {}, value)
         elif value is None or value == "":
             merged.pop(key, None)
         else:
@@ -990,7 +985,7 @@ def _normalize_vault_data(data: dict[str, Any]) -> dict[str, Any]:
     if display_name is not None:
         normalized["display_name"] = str(display_name)
         normalized.setdefault("name", str(display_name))
-    normalized.setdefault("metadata", {})
+    normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
 
 
@@ -1010,7 +1005,7 @@ def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
     if "auth" not in normalized:
         auth_type = str(normalized.pop("type", "mcp_oauth"))
         normalized["auth"] = _legacy_credential_auth(auth_type, normalized)
-    normalized.setdefault("metadata", {})
+    normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
 
 
@@ -1116,7 +1111,7 @@ def _should_purge_secret_key(key: str) -> bool:
 def _normalize_memory_store_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     normalized.setdefault("description", "")
-    normalized.setdefault("metadata", {})
+    normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
 
 
@@ -1489,7 +1484,7 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("initial_events", [])
     normalized.setdefault("resources", [])
     normalized.setdefault("vault_ids", [])
-    normalized.setdefault("metadata", {})
+    normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
 
     schedule = normalized.get("schedule")
     if schedule is not None:
@@ -1764,7 +1759,7 @@ def _trigger_context(value: dict[str, Any]) -> dict[str, Any]:
 def _normalize_user_profile_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     normalized.setdefault("relationship", "external")
-    normalized.setdefault("metadata", {})
+    normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     normalized.setdefault("trust_grants", {})
     return normalized
 
