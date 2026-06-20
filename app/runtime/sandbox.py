@@ -23,6 +23,7 @@ def sandbox_plan_from_environment(config: dict[str, Any] | None) -> SandboxRunti
     env_type = str(env_config.get("type") or "cloud")
     enabled = bool(sandbox_config.get("enabled", False))
     backend = str(sandbox_config.get("backend") or _default_backend_for_env(env_type))
+    policy = _environment_policy_summary(env_config)
 
     if not enabled:
         return SandboxRuntimePlan(
@@ -35,6 +36,7 @@ def sandbox_plan_from_environment(config: dict[str, Any] | None) -> SandboxRunti
                 "environment_type": env_type,
                 "backend": backend,
                 "reason": "sandbox is disabled for this environment",
+                "policy": policy,
             },
         )
 
@@ -52,6 +54,7 @@ def sandbox_plan_from_environment(config: dict[str, Any] | None) -> SandboxRunti
                 "sdk": "openai_agents_sdk",
                 "capabilities": sandbox_config.get("capabilities") or ["filesystem", "shell", "compaction"],
                 "root": sandbox_config.get("root") or "/workspace",
+                "policy": policy,
             },
         )
 
@@ -103,3 +106,41 @@ def _default_backend_for_env(env_type: str) -> str:
     if env_type == "self_hosted":
         return "self_hosted_worker"
     return "unconfigured_cloud"
+
+
+def _environment_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
+    networking = dict(config.get("networking") or {"type": "unrestricted"})
+    networking_type = networking.get("type") or "unrestricted"
+    if networking_type in {"restricted", "none"}:
+        networking_type = "limited"
+    networking_summary = {
+        "type": networking_type,
+        "allowed_hosts": list(networking.get("allowed_hosts") or []),
+        "allow_mcp_servers": bool(networking.get("allow_mcp_servers", False)),
+        "allow_package_managers": bool(networking.get("allow_package_managers", False)),
+    }
+    if networking_summary["type"] == "unrestricted":
+        networking_summary["allowed_hosts"] = []
+
+    packages = dict(config.get("packages") or {})
+    package_summary = {
+        "apt": list(packages.get("apt") or []),
+        "cargo": list(packages.get("cargo") or []),
+        "gem": list(packages.get("gem") or []),
+        "go": list(packages.get("go") or []),
+        "npm": list(packages.get("npm") or []),
+        "pip": list(packages.get("pip") or []),
+    }
+
+    resources = dict(config.get("resources") or {})
+    resource_summary = {
+        key: resources[key]
+        for key in ("cpu", "memory_mb", "disk_mb", "timeout_seconds")
+        if resources.get(key) is not None
+    }
+
+    return {
+        "networking": networking_summary,
+        "packages": package_summary,
+        "resources": resource_summary,
+    }

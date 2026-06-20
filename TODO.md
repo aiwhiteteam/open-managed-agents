@@ -22,7 +22,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent. Delegated agent session threads are created from pinned rosters; full multiagent execution remains TODO.
 - Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
 - Implement deployment scheduler semantics: autonomous scheduled session creation, retries, and lease-safe workers. Cron/timezone validation plus `upcoming_runs_at`/`last_run_at` bookkeeping have local coverage.
-- Implement sandbox/environment policy enforcement through provider interfaces: network allowlists, MCP/package-manager exceptions, resource limits, and production cloud sandbox backends.
+- Implement sandbox/environment policy enforcement through provider interfaces: network allowlists, MCP/package-manager exceptions, resource limits, and production cloud sandbox backends. Policy config validation and runtime sandbox-state summaries have local coverage.
 
 ## Design Invariants / Do Not Break
 
@@ -66,7 +66,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Map `cloud` environments to a real production sandbox provider.
 - Map `self_hosted` environments to a real worker queue.
 - Add production retry execution and hosted worker identity/RBAC. Optional shared worker-token auth, lease ownership enforcement, automatic expired-lease recovery, and retry-at backoff gates have local coverage.
-- Enforce network policies, package installation controls, and sandbox resource limits.
+- Enforce network policies, package installation controls, and sandbox resource limits in real sandbox providers. Config validation and runtime policy summaries are covered locally.
 
 ## Skills
 
