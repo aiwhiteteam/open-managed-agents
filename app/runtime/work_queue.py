@@ -45,14 +45,21 @@ async def enqueue_session_run(
     )
 
 
-async def execute_work_item(work_id: str) -> None:
+async def execute_work_item(work_id: str, *, worker_id: str | None = None) -> None:
     async with session_scope() as db:
         work = await res_q.get_resource(db, resource_id=work_id, resource_type="environment_work")
-        if work is None or not is_work_ready_for_execution(work):
+        if work is None:
             return
         data = dict(work.data or {})
-        data["attempt"] = int(data.get("attempt") or 0) + 1
+        if work.status in LEASED_WORK_STATUSES:
+            _require_lease_owner(work, worker_id=worker_id, action="execute")
+        elif is_work_ready_for_execution(work):
+            data["attempt"] = int(data.get("attempt") or 0) + 1
+        else:
+            return
         data["started_at"] = _utcnow_iso()
+        if worker_id:
+            data["started_by"] = worker_id
         await res_q.update_resource(db, work, data=data, status="running")
         await db.commit()
 
@@ -116,17 +123,29 @@ async def lease_next_work(
     now = datetime.now(timezone.utc)
     for work in reversed(candidates):
         if _work_available_for_lease(work, now):
-            data = dict(work.data or {})
-            data["attempt"] = int(data.get("attempt") or 0) + 1
-            data["lease"] = {
-                "worker_id": worker_id,
-                "leased_at": now.isoformat(),
-                "expires_at": (now + timedelta(seconds=lease_seconds)).isoformat(),
-            }
-            await res_q.update_resource(db, work, data=data, status="leased")
-            await db.flush()
-            return work
+            return await lease_work(db, work, worker_id=worker_id, lease_seconds=lease_seconds, now=now)
     return None
+
+
+async def lease_work(
+    db: AsyncSession,
+    work: ManagedResource,
+    *,
+    worker_id: str,
+    lease_seconds: int = 60,
+    now: datetime | None = None,
+) -> ManagedResource:
+    now = now or datetime.now(timezone.utc)
+    data = dict(work.data or {})
+    data["attempt"] = int(data.get("attempt") or 0) + 1
+    data["lease"] = {
+        "worker_id": worker_id,
+        "leased_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=lease_seconds)).isoformat(),
+    }
+    await res_q.update_resource(db, work, data=data, status="leased")
+    await db.flush()
+    return work
 
 
 async def ack_work(
@@ -184,6 +203,10 @@ def _work_ready_for_execution(work: ManagedResource, now: datetime) -> bool:
 
 def is_work_ready_for_execution(work: ManagedResource, now: datetime | None = None) -> bool:
     return _work_ready_for_execution(work, now or datetime.now(timezone.utc))
+
+
+def is_work_available_for_lease(work: ManagedResource, now: datetime | None = None) -> bool:
+    return _work_available_for_lease(work, now or datetime.now(timezone.utc))
 
 
 def _work_available_for_lease(work: ManagedResource, now: datetime) -> bool:

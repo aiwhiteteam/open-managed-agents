@@ -18,6 +18,7 @@ This queue is visible state for session execution. It does not mean local develo
 - Expired `leased` or `running` work can be recovered by a later poll from another worker.
 - Transient runtime failures can mark work `rescheduling`; polling respects `retry_at` before leasing it again.
 - `POST /work/{work_id}/stop` marks it stopped.
+- `oma-worker` leases work before execution and passes its `worker_id` back into execution, so the CLI path follows the same lease ownership model as direct HTTP workers.
 
 This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with stronger fencing locks, durable retry execution, and worker identity/RBAC when long-running async execution is required.
 
@@ -29,7 +30,7 @@ Most users should not run this in local development. Use it only for `self_hoste
 oma-worker --poll-interval 1
 ```
 
-Use `--environment-id env_...` to constrain the worker to one environment, or `--once` for one-shot execution in tests and maintenance jobs.
+Use `--environment-id env_...` to constrain the worker to one environment, `--worker-id worker-...` to set a stable lease owner, or `--once` for one-shot execution in tests and maintenance jobs.
 
 If `OMA_WORKER_TOKEN` is configured, direct HTTP workers must send:
 

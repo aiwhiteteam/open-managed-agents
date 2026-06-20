@@ -45,6 +45,46 @@ async def test_worker_once_consumes_queued_work(client):
     assert response.json()["completed"] == 1
 
 
+async def test_worker_next_runnable_work_leases_before_execution(client):
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={"name": "Worker Lease Agent", "model": {"id": "gpt-5.5"}},
+    )
+    assert response.status_code == 201, response.text
+    agent = response.json()
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "self-hosted-worker-lease", "config": {"type": "self_hosted"}},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={"agent": {"id": agent["id"], "version": 1}, "environment_id": environment["id"]},
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "lease once"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    leased = await _next_runnable_work(environment_id=environment["id"], worker_id="worker-1", lease_seconds=30)
+
+    assert leased is not None
+    assert leased["status"] == "leased"
+    assert leased["lease"]["worker_id"] == "worker-1"
+    assert await _next_runnable_work(environment_id=environment["id"], worker_id="worker-2", lease_seconds=30) is None
+
+
 async def test_worker_skips_rescheduled_work_before_retry_at(client):
     response = await client.post(
         "/v1/environments",

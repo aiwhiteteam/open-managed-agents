@@ -10,7 +10,7 @@ import structlog
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
 from app.logging import setup as setup_logging
-from app.runtime.work_queue import execute_work_item, is_work_ready_for_execution
+from app.runtime.work_queue import execute_work_item, is_work_available_for_lease, lease_next_work, lease_work
 
 logger = structlog.get_logger()
 
@@ -20,6 +20,8 @@ async def run_worker(
     environment_id: str | None,
     poll_interval_seconds: float,
     once: bool,
+    worker_id: str = "oma-worker",
+    lease_seconds: int = 60,
 ) -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -30,40 +32,60 @@ async def run_worker(
             pass
 
     while not stop_event.is_set():
-        work = await _next_runnable_work(environment_id=environment_id)
+        work = await _next_runnable_work(
+            environment_id=environment_id,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+        )
         if work is None:
             if once:
                 return
             await asyncio.sleep(poll_interval_seconds)
             continue
         logger.info("worker_executing_work", work_id=work["id"], session_id=work.get("session_id"))
-        await execute_work_item(work["id"])
+        await execute_work_item(work["id"], worker_id=worker_id)
         if once:
             return
 
 
-async def _next_runnable_work(*, environment_id: str | None) -> dict[str, Any] | None:
+async def _next_runnable_work(
+    *,
+    environment_id: str | None,
+    worker_id: str = "oma-worker",
+    lease_seconds: int = 60,
+) -> dict[str, Any] | None:
     async with session_scope() as db:
         if environment_id is not None:
-            candidates = await res_q.list_resources(
+            work = await lease_next_work(
                 db,
-                resource_type="environment_work",
-                parent_id=environment_id,
-                limit=1000,
+                environment_id=environment_id,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
             )
-        else:
-            candidates = await res_q.list_resources(db, resource_type="environment_work", limit=1000)
-        runnable = [work for work in reversed(candidates) if is_work_ready_for_execution(work)]
-        if not runnable:
-            return None
-        work = runnable[0]
-        return {"id": work.id, **(work.data or {})}
+            await db.commit()
+            return _work_dict(work)
+
+        candidates = await res_q.list_resources(db, resource_type="environment_work", limit=1000)
+        for work in reversed(candidates):
+            if is_work_available_for_lease(work):
+                await lease_work(db, work, worker_id=worker_id, lease_seconds=lease_seconds)
+                await db.commit()
+                return _work_dict(work)
+        return None
+
+
+def _work_dict(work) -> dict[str, Any] | None:
+    if work is None:
+        return None
+    return {"id": work.id, "status": work.status, **(work.data or {})}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Open Managed Agents Postgres queue worker.")
     parser.add_argument("--environment-id", default=None)
     parser.add_argument("--poll-interval", type=float, default=1.0)
+    parser.add_argument("--worker-id", default="oma-worker")
+    parser.add_argument("--lease-seconds", type=int, default=60)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
 
@@ -73,6 +95,8 @@ def main() -> None:
             environment_id=args.environment_id,
             poll_interval_seconds=args.poll_interval,
             once=args.once,
+            worker_id=args.worker_id,
+            lease_seconds=args.lease_seconds,
         )
     )
 
