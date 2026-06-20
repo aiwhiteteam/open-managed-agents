@@ -157,7 +157,7 @@ async def test_transient_runtime_failure_reschedules_then_caps_retries(client, m
     assert first_retry["stop_reason"]["attempt"] == 1
     assert first_retry["stop_reason"]["retry_after_seconds"] == 1
 
-    events = await _wait_for_event_type(client, session["id"], "session.status_rescheduling")
+    events = await _wait_for_event_type(client, session["id"], "session.status_rescheduled")
     assert any(event["type"] == "session.error" and event["transient"] for event in events)
 
     await runner.run_session_turn(session["id"])

@@ -327,8 +327,8 @@ async def _mark_transient_runtime_failure(db, session, exc: Exception) -> None:
     await events_q.append_event(
         db,
         session,
-        event_type="session.status_rescheduling",
-        payload={"type": "session.status_rescheduling", "status": SESSION_RESCHEDULING, "stop_reason": stop_reason},
+        event_type="session.status_rescheduled",
+        payload={"type": "session.status_rescheduled", "status": SESSION_RESCHEDULING, "stop_reason": stop_reason},
     )
 
 
