@@ -14,7 +14,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events, with `processed_at = null` for queued input events.
-- Implement file/resource copy semantics. Uploaded files can be mounted into sessions, and session-produced files should become session-scoped file references.
+- Keep uploaded-file session mounts creating session-scoped object-storage copies. Session-produced files should still become session-scoped file references.
 - Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
 - Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through vault/profile context.
 - Implement vault credential lifecycle: enrollment, refresh, resolution, revocation/archive purge, secret redaction, and webhook emission.
@@ -77,7 +77,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Files And Resources
 
 - Add content deduplication, malware/content scanning, and object storage lifecycle policies.
-- Implement production filesystem copy/mount semantics for the SDK-validated session resource union.
+- Implement production filesystem mount semantics for the SDK-validated session resource union. Uploaded file resources now create session-scoped object-storage copies.
 - Keep session resource union coverage current if Anthropic adds resource kinds beyond `file`, `github_repository`, and `memory_store`.
 
 ## Vaults

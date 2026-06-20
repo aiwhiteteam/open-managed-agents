@@ -1,6 +1,7 @@
 import asyncio
 
 from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from tests.conftest import TEST_HEADERS
 
@@ -192,3 +193,48 @@ async def test_session_local_agent_update_does_not_mutate_agent_version(client):
     events = await _wait_for_event_type(client, session["id"], "agent.custom_tool_use")
     assert next(event for event in events if event["id"] == session["stop_reason"]["event_ids"][0])["name"] == "session_lookup"
 
+
+async def test_file_session_resource_creates_session_scoped_copy(client):
+    response = await client.post(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        files={"file": ("notes.txt", b"session notes", "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+    file = response.json()
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "resources": [{"type": "file", "file_id": file["id"], "mount_path": "/workspace/notes.txt"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+    file_resource = next(resource for resource in session["resources"] if resource["type"] == "file")
+    assert file_resource == {
+        "id": file_resource["id"],
+        "type": "file",
+        "file_id": file["id"],
+        "mount_path": "/workspace/notes.txt",
+        "created_at": file_resource["created_at"],
+        "updated_at": file_resource["updated_at"],
+    }
+
+    async with session_scope() as db:
+        resources = await res_q.list_resources(
+            db,
+            resource_type="session_resource",
+            parent_id=session["id"],
+            limit=10,
+        )
+
+    stored = resources[0].data["session_file"]
+    assert stored["source_file_id"] == file["id"]
+    assert stored["filename"] == "notes.txt"
+    assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")

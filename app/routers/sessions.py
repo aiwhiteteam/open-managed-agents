@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import storage
 from app.agent_contract import validate_mcp_bindings
 from app.auth import require_api_access
 from app.config import get_settings
@@ -719,7 +720,13 @@ async def _create_session_resource(
     *,
     allowed_types: set[str],
 ):
-    normalized = await _normalize_session_resource_data(db, data, allowed_types=allowed_types, workspace_id=session.workspace_id)
+    normalized = await _normalize_session_resource_data(
+        db,
+        data,
+        allowed_types=allowed_types,
+        workspace_id=session.workspace_id,
+        session_id=session.id,
+    )
     return await res_q.create_resource(
         db,
         resource_type="session_resource",
@@ -736,6 +743,7 @@ async def _normalize_session_resource_data(
     *,
     allowed_types: set[str],
     workspace_id: str,
+    session_id: str,
 ) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise HTTPException(status_code=422, detail="Session resource must be an object")
@@ -744,7 +752,7 @@ async def _normalize_session_resource_data(
         allowed = ", ".join(sorted(allowed_types))
         raise HTTPException(status_code=422, detail=f"Session resource type must be one of: {allowed}")
     if resource_type == "file":
-        return await _normalize_file_session_resource(db, data, workspace_id=workspace_id)
+        return await _normalize_file_session_resource(db, data, workspace_id=workspace_id, session_id=session_id)
     if resource_type == "github_repository":
         return _normalize_github_session_resource(data)
     if resource_type == "memory_store":
@@ -752,7 +760,13 @@ async def _normalize_session_resource_data(
     raise HTTPException(status_code=422, detail=f"Unsupported session resource type: {resource_type}")
 
 
-async def _normalize_file_session_resource(db: AsyncSession, data: dict[str, Any], *, workspace_id: str) -> dict[str, Any]:
+async def _normalize_file_session_resource(
+    db: AsyncSession,
+    data: dict[str, Any],
+    *,
+    workspace_id: str,
+    session_id: str,
+) -> dict[str, Any]:
     file_id = str(data.get("file_id") or "")
     if not file_id:
         raise HTTPException(status_code=422, detail="file session resources require file_id")
@@ -761,10 +775,48 @@ async def _normalize_file_session_resource(db: AsyncSession, data: dict[str, Any
         raise HTTPException(status_code=404, detail="File not found")
     mount_path = str(data.get("mount_path") or f"/mnt/session/uploads/{file_id}")
     _validate_mount_path(mount_path)
-    return {
+    normalized = {
         "type": "file",
         "file_id": file_id,
         "mount_path": mount_path,
+        "read_only": True,
+    }
+    copied = await _copy_file_for_session_resource(file_resource, session_id=session_id, workspace_id=workspace_id)
+    if copied is not None:
+        normalized["session_file"] = copied
+    return normalized
+
+
+async def _copy_file_for_session_resource(file_resource, *, session_id: str, workspace_id: str) -> dict[str, Any] | None:
+    if not (storage.is_object_storage_backend(file_resource.storage_backend) and file_resource.storage_key):
+        return None
+    filename = file_resource.filename or file_resource.name or file_resource.id
+    destination_key = storage.object_key(
+        namespace=f"sessions_{session_id}",
+        category="resources",
+        filename=filename,
+        content_sha256=file_resource.sha256,
+        workspace_id=workspace_id,
+    )
+    try:
+        await storage.copy_file(
+            file_resource.storage_key,
+            destination_key,
+            content_type=file_resource.content_type,
+        )
+    except storage.StorageConfigurationError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "source_file_id": file_resource.id,
+        "filename": filename,
+        "mime_type": file_resource.content_type or "application/octet-stream",
+        "size_bytes": file_resource.size_bytes,
+        "sha256": file_resource.sha256,
+        "storage": {
+            "backend": file_resource.storage_backend,
+            "key": destination_key,
+            "url": storage.public_url_for_key(destination_key),
+        },
     }
 
 
