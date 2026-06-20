@@ -1,11 +1,46 @@
+import re
+
 from fastapi import HTTPException
+
+MAX_AGENT_TOOLS = 128
+MAX_CUSTOM_TOOL_NAME_CHARS = 128
+MAX_CUSTOM_TOOL_DESCRIPTION_CHARS = 1024
+CUSTOM_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def normalize_agent_tools(tools: list[dict]) -> list[dict]:
     if not isinstance(tools, list):
         raise HTTPException(status_code=422, detail="tools must be an array")
 
-    return [_normalize_agent_tool(tool) for tool in tools]
+    normalized = [_normalize_agent_tool(tool) for tool in tools]
+    _validate_agent_tool_limits(normalized)
+    return normalized
+
+
+def _validate_agent_tool_limits(tools: list[dict]) -> None:
+    count = sum(_agent_tool_count(tool) for tool in tools)
+    if count > MAX_AGENT_TOOLS:
+        raise HTTPException(status_code=422, detail="tools supports at most 128 tools across all toolsets")
+
+    custom_names: set[str] = set()
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "custom":
+            continue
+        name = str(tool.get("name") or "")
+        if name in custom_names:
+            raise HTTPException(status_code=422, detail=f"Duplicate custom tool name: {name}")
+        custom_names.add(name)
+
+
+def _agent_tool_count(tool: dict) -> int:
+    if not isinstance(tool, dict):
+        return 1
+    if tool.get("type") == "custom":
+        return 1
+    configs = tool.get("configs")
+    if isinstance(configs, list) and configs:
+        return len(configs)
+    return 1
 
 
 def _normalize_agent_tool(tool: dict) -> dict:
@@ -73,8 +108,18 @@ def _normalize_custom_tool(tool: dict) -> dict:
     name = normalized.get("name")
     if not isinstance(name, str) or not name:
         raise HTTPException(status_code=422, detail="custom tools require name")
-    if not isinstance(normalized.get("description"), str) or not normalized["description"]:
+    if len(name) > MAX_CUSTOM_TOOL_NAME_CHARS or not CUSTOM_TOOL_NAME_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=422,
+            detail="custom tool name must be 1-128 characters using letters, digits, underscores, or hyphens",
+        )
+    description = normalized.get("description")
+    if description is None:
         normalized["description"] = f"Custom tool {name}."
+    elif not isinstance(description, str) or not description:
+        raise HTTPException(status_code=422, detail="custom tool description must be a non-empty string")
+    elif len(description) > MAX_CUSTOM_TOOL_DESCRIPTION_CHARS:
+        raise HTTPException(status_code=422, detail="custom tool description must be at most 1024 characters")
     input_schema = normalized.get("input_schema")
     if not isinstance(input_schema, dict):
         normalized["input_schema"] = {"type": "object", "properties": {}}

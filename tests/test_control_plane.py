@@ -149,6 +149,89 @@ async def test_agent_metadata_limits_are_enforced(client):
     assert "at most 16 keys" in response.json()["error"]["message"]
 
 
+async def test_agent_tool_limits_and_custom_tool_names_are_enforced(client):
+    def custom_tool(index: int, *, name: str | None = None, description: str = "Lookup a record.") -> dict:
+        return {
+            "type": "custom",
+            "name": name or f"lookup_{index}",
+            "description": description,
+            "input_schema": {"type": "object", "properties": {}},
+        }
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Too Many Tools",
+            "model": {"id": "gpt-5.5"},
+            "tools": [custom_tool(index) for index in range(129)],
+        },
+    )
+    assert response.status_code == 422
+    assert "at most 128" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Too Many Toolset Configs",
+            "model": {"id": "gpt-5.5"},
+            "tools": [
+                {
+                    "type": "agent_toolset_20260401",
+                    "configs": [{"name": f"tool_{index}"} for index in range(129)],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 422
+    assert "at most 128" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Duplicate Tools",
+            "model": {"id": "gpt-5.5"},
+            "tools": [custom_tool(1, name="lookup"), custom_tool(2, name="lookup")],
+        },
+    )
+    assert response.status_code == 422
+    assert "Duplicate custom tool name" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Invalid Tool Name",
+            "model": {"id": "gpt-5.5"},
+            "tools": [custom_tool(1, name="lookup customer")],
+        },
+    )
+    assert response.status_code == 422
+    assert "letters, digits" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Long Tool Description",
+            "model": {"id": "gpt-5.5"},
+            "tools": [custom_tool(1, description="x" * 1025)],
+        },
+    )
+    assert response.status_code == 422
+    assert "at most 1024" in response.json()["error"]["message"]
+
+    agent = await _create_agent(client)
+    response = await client.patch(
+        f"/v1/agents/{agent['id']}",
+        headers=TEST_HEADERS,
+        json={"version": agent["version"], "tools": [custom_tool(index) for index in range(129)]},
+    )
+    assert response.status_code == 422
+
+
 async def test_multiagent_roster_pins_referenced_agent_versions(client):
     reviewer = await _create_agent(client)
 
