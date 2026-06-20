@@ -1,3 +1,9 @@
+from datetime import datetime, timedelta, timezone
+
+from app.db.engine import session_scope
+from app.db.models import ManagedResource
+from app.ids import new_id
+from app.workspace import DEFAULT_WORKSPACE_ID
 from tests.conftest import TEST_HEADERS
 
 
@@ -109,6 +115,29 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     assert versions[0]["operation"] == "modified"
 
 
+async def test_memory_path_prefix_query_is_not_capped_before_filtering(client):
+    store = await _create_store(client)
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    target = _memory_resource(store["id"], "customers/acme", base_time)
+    newer_non_matches = [
+        _memory_resource(store["id"], f"other/{index}", base_time + timedelta(seconds=index + 1))
+        for index in range(1001)
+    ]
+    async with session_scope() as db:
+        db.add(target)
+        db.add_all(newer_non_matches)
+        await db.commit()
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        params={"path_prefix": "customers", "limit": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [item["path_key"] for item in response.json()["data"]] == ["customers/acme"]
+
+
 async def test_memory_version_redaction_removes_snapshot_content(client):
     store = await _create_store(client)
     response = await client.post(
@@ -144,3 +173,24 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     current_memory = response.json()
     assert current_memory["redacted"] is True
     assert "content" not in current_memory
+
+
+def _memory_resource(memory_store_id: str, path_key: str, created_at: datetime) -> ManagedResource:
+    return ManagedResource(
+        id=new_id("mem"),
+        workspace_id=DEFAULT_WORKSPACE_ID,
+        resource_type="memory",
+        parent_id=memory_store_id,
+        name=path_key,
+        data={
+            "path": f"/{path_key}",
+            "path_key": path_key,
+            "content": "remembered",
+            "version": 1,
+            "metadata": {},
+            "redacted": False,
+            "memory_version_id": "",
+        },
+        created_at=created_at,
+        updated_at=created_at,
+    )

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.models._base import Base, TimestampMixin
@@ -142,6 +142,14 @@ class ManagedResource(TimestampMixin, Base):
             "parent_id",
             "version",
             name="uq_managed_resources_workspace_type_parent_version",
+        ),
+        Index(
+            "ix_managed_resources_workspace_type_parent_deleted_name",
+            "workspace_id",
+            "resource_type",
+            "parent_id",
+            "deleted_at",
+            "name",
         ),
     )
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ManagedResource
@@ -112,6 +112,38 @@ async def get_resource_by_name(
         stmt = stmt.where(ManagedResource.deleted_at.is_(None))
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def list_resources_by_name_prefix(
+    db: AsyncSession,
+    *,
+    resource_type: str,
+    parent_id: str,
+    name_prefix: str,
+    limit: int = 1000,
+    include_archived: bool = True,
+    workspace_id: str | None = None,
+) -> list[ManagedResource]:
+    escaped = _escape_like(name_prefix)
+    stmt = (
+        select(ManagedResource)
+        .where(
+            ManagedResource.resource_type == resource_type,
+            ManagedResource.parent_id == parent_id,
+            ManagedResource.workspace_id == workspace_id_or_default(workspace_id),
+            ManagedResource.deleted_at.is_(None),
+            or_(
+                ManagedResource.name == name_prefix,
+                ManagedResource.name.like(f"{escaped}/%", escape="\\"),
+            ),
+        )
+        .order_by(ManagedResource.created_at.desc(), ManagedResource.id.desc())
+        .limit(limit)
+    )
+    if not include_archived:
+        stmt = stmt.where(ManagedResource.archived_at.is_(None))
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_resource_version(
@@ -233,3 +265,7 @@ async def next_version(
         )
     )
     return int(result.scalar_one_or_none() or 0) + 1
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

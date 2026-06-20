@@ -217,16 +217,27 @@ async def list_memories(
     db: AsyncSession = Depends(get_session),
 ):
     await _must_exist(db, memory_store_id, "memory_store")
-    resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
     if path is not None:
         path_key = _path_key(_normalize_memory_path(path))
-        resources = [memory for memory in resources if memory.data.get("path_key") == path_key]
-    if path_prefix is not None:
+        memory = await _find_memory_by_path(db, memory_store_id, path_key)
+        resources = [memory] if memory is not None else []
+    elif path_prefix is not None:
+        prefix = _path_key(_normalize_memory_path(path_prefix))
+        resources = await res_q.list_resources_by_name_prefix(
+            db,
+            resource_type="memory",
+            parent_id=memory_store_id,
+            name_prefix=prefix,
+            limit=1000,
+        )
+    else:
+        resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
+    if path is not None and path_prefix is not None:
         prefix = _path_key(_normalize_memory_path(path_prefix))
         resources = [
             memory
             for memory in resources
-            if memory.data.get("path_key") == prefix or str(memory.data.get("path_key", "")).startswith(f"{prefix}/")
+            if memory.name == prefix or str(memory.name or "").startswith(f"{prefix}/")
         ]
     resources = _sort_memories(resources, order=order, order_by=order_by)
     return paginate([_resource_response(memory, view=view) for memory in resources], limit=limit, page=page)
