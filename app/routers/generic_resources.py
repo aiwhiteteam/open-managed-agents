@@ -42,6 +42,7 @@ MEMORY_VIEWS = {"basic", "full"}
 USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
 MAX_USER_PROFILE_FIELD_CHARS = 255
 MAX_DISPLAY_NAME_CHARS = 255
+MAX_MEMORY_STORE_DESCRIPTION_CHARS = 1024
 CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
 CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
 
@@ -1336,9 +1337,35 @@ def _should_purge_secret_key(key: str) -> bool:
 
 def _normalize_memory_store_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
+    normalized["name"] = _memory_store_name(normalized.get("name"))
     normalized.setdefault("description", "")
+    normalized["description"] = _memory_store_description(normalized.get("description"))
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
+
+
+def _memory_store_name(value: Any) -> str:
+    if value is None:
+        raise HTTPException(status_code=422, detail="memory_store name is required")
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="memory_store name must be a string")
+    if not value:
+        raise HTTPException(status_code=422, detail="memory_store name must not be empty")
+    if len(value) > MAX_DISPLAY_NAME_CHARS:
+        raise HTTPException(status_code=422, detail="memory_store name must be at most 255 characters")
+    if any(unicodedata.category(char) == "Cc" for char in value):
+        raise HTTPException(status_code=422, detail="memory_store name must not contain control characters")
+    return value
+
+
+def _memory_store_description(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail="memory_store description must be a string")
+    if len(value) > MAX_MEMORY_STORE_DESCRIPTION_CHARS:
+        raise HTTPException(status_code=422, detail="memory_store description must be at most 1024 characters")
+    return value
 
 
 def _memory_store_response(resource) -> dict[str, Any]:

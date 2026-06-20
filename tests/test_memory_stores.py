@@ -17,6 +17,38 @@ async def _create_store(client):
     return response.json()
 
 
+async def test_memory_store_name_and_description_validation(client):
+    invalid_payloads = [
+        ({}, "name"),
+        ({"name": ""}, "empty"),
+        ({"name": "x" * 256}, "255"),
+        ({"name": "bad\nname"}, "control"),
+        ({"name": "Customer memory", "description": "x" * 1025}, "1024"),
+    ]
+
+    for payload, message in invalid_payloads:
+        response = await client.post("/v1/memory_stores", headers=TEST_HEADERS, json=payload)
+
+        assert response.status_code == 422, response.text
+        assert message in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/memory_stores",
+        headers=TEST_HEADERS,
+        json={"name": "Customer memory", "description": "Useful customer notes."},
+    )
+    assert response.status_code == 201, response.text
+    store = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}",
+        headers=TEST_HEADERS,
+        json={"name": "bad\tname"},
+    )
+    assert response.status_code == 422
+    assert "control" in response.json()["error"]["message"]
+
+
 async def test_memory_path_uniqueness_lookup_and_versions(client):
     store = await _create_store(client)
 
