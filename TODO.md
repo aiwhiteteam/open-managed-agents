@@ -16,7 +16,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events. `processed_at = null` for queued user/system input events and non-null processed timestamps for output events have local coverage.
 - Keep uploaded-file session mounts creating session-scoped object-storage copies. Session-produced files should still become session-scoped file references.
 - Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
-- Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through validated workspace vault context. Runtime URL matching and MCP auth failure events remain TODO.
+- Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through validated workspace vault context. Runtime URL matching and non-terminal missing-auth session errors have local coverage; real MCP connection/OAuth refresh remains TODO.
 - Implement vault credential lifecycle: enrollment, refresh, runtime resolution, revocation, and webhook emission. Response redaction and archive/delete secret purge have local coverage.
 - Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events.
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent.

@@ -414,6 +414,92 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     assert memory_context["memories"][0]["content"] == "ACME prefers email."
 
 
+async def test_mcp_credentials_are_matched_from_session_vaults(client):
+    mcp_server = {"type": "url", "name": "github", "url": "https://mcp.example.com/github"}
+    agent = await _create_agent(
+        client,
+        tools=[{"type": "mcp_toolset", "mcp_server_name": "github"}],
+        mcp_servers=[mcp_server],
+    )
+    environment = await _create_environment(client)
+
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "MCP Vault"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "GitHub MCP",
+            "auth": {
+                "type": "static_bearer",
+                "mcp_server_url": "https://mcp.example.com/github/",
+                "token": "secret-token",
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "vault_ids": [vault["id"]],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "use github mcp"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    await _wait_for_event_type(client, session["id"], "agent.mcp_tool_use")
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    mcp_auth = response.json()["run_state"]["mcp_auth"]
+    assert mcp_auth["errors"] == []
+    assert mcp_auth["servers"][0]["status"] == "matched"
+    assert mcp_auth["servers"][0]["credential_id"] == credential["id"]
+    assert "token" not in str(mcp_auth)
+
+
+async def test_missing_mcp_credentials_emit_session_error_without_blocking_session_create(client):
+    mcp_server = {"type": "url", "name": "github", "url": "https://mcp.example.com/github"}
+    agent = await _create_agent(
+        client,
+        tools=[{"type": "mcp_toolset", "mcp_server_name": "github"}],
+        mcp_servers=[mcp_server],
+    )
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "use github mcp"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    events = await _wait_for_event_type(client, session["id"], "agent.mcp_tool_use")
+    errors = [event for event in events if event["type"] == "session.error" and event.get("error_type") == "mcp_auth_missing"]
+    assert errors
+    assert errors[0]["mcp_server_name"] == "github"
+
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["status"] == "idle"
+    assert session["stop_reason"]["type"] == "requires_action"
+    assert session["run_state"]["mcp_auth"]["errors"][0]["type"] == "mcp_auth_missing"
+
+
 async def test_primary_session_thread_archive_is_persisted(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

@@ -50,7 +50,7 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | Agent resource | `agents` is the mutable pointer; `agent_versions` stores immutable snapshots. | Implemented |
 | Agent update semantics | Current version required; omitted fields preserved; scalars replace; arrays replace; metadata merges with empty-string delete; no-op returns current version. | Implemented |
 | Multiagent roster pinning | Coordinator `multiagent.agents` entries without `version` are resolved to the referenced agent's current active version at create/update time. | Implemented |
-| MCP server/toolset declaration | Agent `mcp_servers` and `mcp_toolset` entries must match. Secrets stay out of agent definitions and are supplied through session vaults. | Validation implemented; runtime MCP auth still partial |
+| MCP server/toolset declaration | Agent `mcp_servers` and `mcp_toolset` entries must match. Secrets stay out of agent definitions and are supplied through session vaults. | Validation plus runtime credential URL matching implemented; real MCP connection/OAuth refresh still partial |
 | Tools | Built-in toolset, MCP toolset, and custom tools are stored in agent versions. | Stored; runtime semantics partial |
 | Permission policies | Server-executed tools may require confirmation through `requires_action`; custom tools use application continuation through `user.custom_tool_result`. | MVP event contract implemented; full runtime enforcement still partial |
 | Skills | Skills are separate filesystem-based resources referenced by agents; custom skill versions are pinned or `latest`. | Partial |

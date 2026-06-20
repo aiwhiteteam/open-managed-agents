@@ -115,7 +115,9 @@ async def _run_session_turn(session_id: str) -> None:
                 raise RuntimeError(f"Environment {session.environment_id} not found")
             history = await events_q.list_events(db, session_id=session.id, after_seq=0, limit=500)
             effective_version = _effective_agent_version(version, session.status_details)
-            runtime_context = await _runtime_context_for_session(db, session)
+            runtime_context = await _runtime_context_for_session(db, session, effective_version)
+            if await _append_runtime_context_events(db, session, runtime_context):
+                await db.commit()
 
         result = await _execute(effective_version, history, environment.config, runtime_context=runtime_context)
 
@@ -536,6 +538,7 @@ async def _execute_openai(
             "enabled_sdk_tools": enabled_sdk_tools,
             "filtered_tools": filtered_tools,
             "memory_context": _memory_context_for_run_state(runtime_context),
+            "mcp_auth": _mcp_context_for_run_state(runtime_context),
             "sdk_state": _safe_state(result),
         },
         sandbox_state=sandbox_plan.summary,
@@ -562,6 +565,7 @@ async def _execute_local(
                 "agent_version_id": version.id,
                 "resumed_from": latest_action.type,
                 "memory_context": memory_context,
+                "mcp_auth": _mcp_context_for_run_state(runtime_context),
             },
             sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
         )
@@ -587,6 +591,7 @@ async def _execute_local(
                     "agent_version_id": version.id,
                     "pending_action": "custom_tool",
                     "memory_context": memory_context,
+                    "mcp_auth": _mcp_context_for_run_state(runtime_context),
                 },
                 sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
             )
@@ -610,6 +615,7 @@ async def _execute_local(
                     "agent_version_id": version.id,
                     "pending_action": "tool_confirmation",
                     "memory_context": memory_context,
+                    "mcp_auth": _mcp_context_for_run_state(runtime_context),
                 },
                 sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
             )
@@ -622,12 +628,17 @@ async def _execute_local(
         text = "Open Managed Agents local runtime is idle."
     return RuntimeResult(
         final_text=text,
-        run_state={"backend": "local", "agent_version_id": version.id, "memory_context": memory_context},
+        run_state={
+            "backend": "local",
+            "agent_version_id": version.id,
+            "memory_context": memory_context,
+            "mcp_auth": _mcp_context_for_run_state(runtime_context),
+        },
         sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
     )
 
 
-async def _runtime_context_for_session(db, session) -> dict[str, Any]:
+async def _runtime_context_for_session(db, session, version: EffectiveAgentVersion) -> dict[str, Any]:
     session_resources = await res_q.list_resources(
         db,
         resource_type="session_resource",
@@ -663,7 +674,84 @@ async def _runtime_context_for_session(db, session) -> dict[str, Any]:
                 "memories": [_memory_context_item(memory) for memory in memories if not (memory.data or {}).get("redacted")],
             }
         )
-    return {"memory_stores": memory_stores}
+    return {
+        "memory_stores": memory_stores,
+        "mcp_auth": await _mcp_auth_context_for_session(db, session, version),
+    }
+
+
+async def _mcp_auth_context_for_session(db, session, version: EffectiveAgentVersion) -> dict[str, Any]:
+    servers = [server for server in version.mcp_servers or [] if isinstance(server, dict)]
+    if not servers:
+        return {"servers": [], "errors": []}
+
+    credentials = []
+    for vault_id in (session.status_details or {}).get("vault_ids") or []:
+        vault_credentials = await res_q.list_resources(
+            db,
+            resource_type="credential",
+            parent_id=str(vault_id),
+            limit=1000,
+            include_archived=False,
+            workspace_id=session.workspace_id,
+        )
+        credentials.extend(vault_credentials)
+
+    by_url: dict[str, Any] = {}
+    for credential in credentials:
+        auth = (credential.data or {}).get("auth") or {}
+        if not isinstance(auth, dict):
+            continue
+        url = _normalized_mcp_url(auth.get("mcp_server_url"))
+        if url and url not in by_url:
+            by_url[url] = credential
+
+    resolved_servers = []
+    errors = []
+    for server in servers:
+        server_url = str(server.get("url") or "")
+        credential = by_url.get(_normalized_mcp_url(server_url))
+        if credential is None:
+            error = {
+                "type": "mcp_auth_missing",
+                "mcp_server_name": str(server.get("name") or ""),
+                "mcp_server_url": server_url,
+            }
+            errors.append(error)
+            resolved_servers.append({**error, "status": "missing", "credential_id": None, "vault_id": None})
+            continue
+        auth = (credential.data or {}).get("auth") or {}
+        resolved_servers.append(
+            {
+                "type": "mcp_auth",
+                "status": "matched",
+                "mcp_server_name": str(server.get("name") or ""),
+                "mcp_server_url": server_url,
+                "credential_id": credential.id,
+                "vault_id": credential.parent_id,
+                "auth_type": str(auth.get("type") or "mcp_oauth"),
+            }
+        )
+    return {"servers": resolved_servers, "errors": errors}
+
+
+async def _append_runtime_context_events(db, session, runtime_context: dict[str, Any]) -> bool:
+    emitted = False
+    mcp_auth = _mcp_context_for_run_state(runtime_context)
+    for error in mcp_auth.get("errors") or []:
+        await events_q.append_event(
+            db,
+            session,
+            event_type="session.error",
+            payload={
+                "type": "session.error",
+                "error_type": "mcp_auth_missing",
+                "message": f"MCP credential not found for {error.get('mcp_server_name') or error.get('mcp_server_url')}",
+                **error,
+            },
+        )
+        emitted = True
+    return emitted
 
 
 def _memory_context_item(memory) -> dict[str, Any]:
@@ -711,6 +799,24 @@ def _memory_context_for_run_state(runtime_context: dict[str, Any] | None) -> dic
     if not isinstance(memory_stores, list):
         return {"memory_stores": []}
     return {"memory_stores": memory_stores}
+
+
+def _mcp_context_for_run_state(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(runtime_context, dict):
+        return {"servers": [], "errors": []}
+    mcp_auth = runtime_context.get("mcp_auth")
+    if not isinstance(mcp_auth, dict):
+        return {"servers": [], "errors": []}
+    servers = mcp_auth.get("servers")
+    errors = mcp_auth.get("errors")
+    return {
+        "servers": servers if isinstance(servers, list) else [],
+        "errors": errors if isinstance(errors, list) else [],
+    }
+
+
+def _normalized_mcp_url(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
 
 
 def _latest_user_action_event(history):
