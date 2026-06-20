@@ -17,6 +17,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.event_validation import validate_system_message_batch
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
@@ -1886,13 +1887,16 @@ def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
         raise HTTPException(status_code=422, detail="Deployment initial_events must contain at least one event")
     if len(initial_events) > 50:
         raise HTTPException(status_code=422, detail="Deployment initial_events supports at most 50 events")
+    event_types: list[str] = []
     for raw_event in initial_events:
         if not isinstance(raw_event, dict):
             raise HTTPException(status_code=422, detail="Deployment initial_events entries must be objects")
         event_type = str(raw_event.get("type") or "")
         if event_type not in {"system.message", "user.define_outcome", "user.message"}:
             raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
-    if not any(str(raw_event.get("type") or "") == "user.message" for raw_event in initial_events):
+        event_types.append(event_type)
+    validate_system_message_batch(event_types)
+    if "user.message" not in event_types:
         raise HTTPException(status_code=422, detail="Deployment initial_events must include a user.message event")
 
 

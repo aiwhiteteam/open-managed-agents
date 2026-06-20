@@ -300,6 +300,77 @@ async def test_deployment_run_mounts_deployment_resources(client):
     assert {resource["type"] for resource in response.json()["data"]} == {"file", "github_repository", "memory_store"}
 
 
+async def test_deployment_initial_events_system_message_ordering_and_update_contract(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "System context deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [
+                {"type": "user.message", "content": "run with context"},
+                {"type": "system.message", "content": "deployment context"},
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    run = response.json()
+
+    response = await client.get(f"/v1/sessions/{run['session_id']}/events", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    events = response.json()["data"]
+    assert [event["type"] for event in events][:3] == ["session.status_idle", "user.message", "system.message"]
+
+    response = await client.post(
+        f"/v1/deployments/{deployment['id']}",
+        headers=TEST_HEADERS,
+        json={"name": "Renamed system context deployment"},
+    )
+    assert response.status_code == 200, response.text
+    assert [event["type"] for event in response.json()["initial_events"]] == ["user.message", "system.message"]
+
+    for update in ({"initial_events": []}, {"initial_events": None}):
+        response = await client.post(f"/v1/deployments/{deployment['id']}", headers=TEST_HEADERS, json=update)
+        assert response.status_code == 422, response.text
+
+    invalid_batches = [
+        [
+            {"type": "system.message", "content": "context"},
+            {"type": "user.message", "content": "work"},
+        ],
+        [
+            {"type": "user.message", "content": "work"},
+            {"type": "system.message", "content": "context"},
+            {"type": "user.message", "content": "more work"},
+        ],
+        [
+            {"type": "user.message", "content": "work"},
+            {"type": "system.message", "content": "context"},
+            {"type": "system.message", "content": "more context"},
+        ],
+    ]
+    for events in invalid_batches:
+        response = await client.post(
+            "/v1/deployments",
+            headers=TEST_HEADERS,
+            json={
+                "name": "Invalid initial events",
+                "agent": {"id": agent["id"], "version": 1},
+                "environment_id": environment["id"],
+                "initial_events": events,
+            },
+        )
+        assert response.status_code == 422, response.text
+
+
 async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

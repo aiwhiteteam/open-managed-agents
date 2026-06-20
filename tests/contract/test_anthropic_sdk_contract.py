@@ -1125,7 +1125,10 @@ async def test_anthropic_sdk_deployments_contract():
             name="SDK Contract Deployment",
             agent={"id": agent.id, "version": agent.version},
             environment_id=environment.id,
-            initial_events=[{"type": "user.message", "content": [{"type": "text", "text": "Run report."}]}],
+            initial_events=[
+                {"type": "user.message", "content": [{"type": "text", "text": "Run report."}]},
+                {"type": "system.message", "content": [{"type": "text", "text": "Contract deployment context."}]},
+            ],
             metadata={"keep": "yes", "drop": "soon"},
             resources=[
                 {
@@ -1154,6 +1157,7 @@ async def test_anthropic_sdk_deployments_contract():
         assert deployment.type == "deployment"
         assert deployment.agent.id == agent.id
         assert deployment.environment_id == environment.id
+        assert [event.type for event in deployment.initial_events] == ["user.message", "system.message"]
         assert deployment.schedule.expression == "0 9 * * *"
         assert {resource.type for resource in deployment.resources} == {"file", "github_repository", "memory_store"}
         deployment_resources_by_type = {resource.type: resource for resource in deployment.resources}
