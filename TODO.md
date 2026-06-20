@@ -70,7 +70,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Skills
 
-- Verify the zip archive response shape against Claude skill downloads and official SDK clients.
+- Keep skill archive download shape covered. Zip response content-type, attachment header, and archive file paths are locally tested; official SDK binary download remains covered in contract tests.
 - Implement exact SDK multipart field compatibility for `files`.
 - Replace MVP sequential skill version strings (`"1"`, `"2"`) with official-compatible version identifiers and lifecycle semantics.
 
