@@ -335,6 +335,42 @@ async def test_deployment_run_records_session_creation_errors(client):
     assert run["error"]["type"] == "environment_archived_error"
 
 
+async def test_deployment_archives_without_run_when_primary_agent_is_archived(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Archived agent deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "run"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/agents/{agent['id']}/archive", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 409
+
+    response = await client.get(f"/v1/deployments/{deployment['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["archived_at"] is not None
+
+    response = await client.get(
+        "/v1/deployment_runs",
+        headers=TEST_HEADERS,
+        params={"deployment_id": deployment["id"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
 async def test_archived_deployment_is_terminal(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

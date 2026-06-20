@@ -15,6 +15,7 @@ Deployments are stored in Postgres as managed resources.
 - `run` creates a `deployment_run`.
 - If the deployment has `agent` and `environment_id`, `run` also creates a session and links `deployment_run.session_id`.
 - If session creation fails because the referenced environment or agent is no longer usable, `run` returns a failed `deployment_run` with an `error` object.
+- If the deployment's primary agent has been archived, `run` archives the deployment and does not create a deployment run.
 
 ## Example
 

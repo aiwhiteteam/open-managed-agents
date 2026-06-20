@@ -529,6 +529,7 @@ async def run_deployment(
     if (deployment.status == "paused" or deployment.data.get("status") == "paused") and trigger != "manual":
         raise HTTPException(status_code=409, detail="Deployment schedule is paused")
     deployment_data = dict(deployment.data or {})
+    await _archive_if_deployment_agent_unusable(db, deployment, deployment_data)
     attempt = int(run_input.get("attempt") or 1)
     if trigger == "schedule":
         schedule = dict(deployment_data.get("schedule") or {})
@@ -1240,6 +1241,22 @@ class DeploymentRunCreationError(RuntimeError):
 def _ensure_deployment_mutable(deployment) -> None:
     if deployment.archived_at is not None:
         raise HTTPException(status_code=409, detail="Deployment is archived")
+
+
+async def _archive_if_deployment_agent_unusable(
+    db: AsyncSession,
+    deployment,
+    deployment_data: dict[str, Any],
+) -> None:
+    agent_id, _version = _deployment_agent_ref(deployment_data.get("agent"))
+    agent = await agents_q.get_agent(db, agent_id)
+    if agent is not None and agent.archived_at is None:
+        return
+    await res_q.archive_resource(db, deployment)
+    await db.commit()
+    if agent is None:
+        raise HTTPException(status_code=409, detail="Deployment agent was not found; deployment archived")
+    raise HTTPException(status_code=409, detail="Deployment agent is archived; deployment archived")
 
 
 def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
