@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -165,7 +166,7 @@ async def _run_session_turn(session_id: str) -> None:
                 )
                 await db.commit()
                 return
-            if result.final_text:
+            if result.final_text and not any(event["type"] == "agent.message" for event in result.tool_events):
                 await events_q.append_event(
                     db,
                     session,
@@ -539,9 +540,11 @@ async def _execute_openai(
             tool_events.append(maybe_tool)
 
     final_output = getattr(result, "final_output", None)
+    requires_action = any(event.get("requires_confirmation") for event in tool_events)
     return RuntimeResult(
         final_text=str(final_output or ""),
         tool_events=tool_events,
+        requires_action=requires_action,
         run_state={
             "backend": "openai_agents_sdk",
             "provider": provider.provider,
@@ -1256,23 +1259,170 @@ def _text_from_payload(payload: dict[str, Any]) -> str:
 
 def _map_openai_stream_event(event) -> dict[str, Any] | None:
     event_type = getattr(event, "type", "")
+    if event_type == "agent_updated_stream_event":
+        agent = getattr(event, "new_agent", None)
+        return {
+            "type": "agent.updated",
+            "name": str(getattr(agent, "name", "") or "agent"),
+            "source": "openai_agents_sdk",
+        }
+
     if event_type != "run_item_stream_event":
         return None
     name = getattr(event, "name", "")
     item = getattr(event, "item", None)
+    raw_item = _raw_stream_item(item)
+
+    if name == "message_output_created":
+        text = _text_from_raw_openai_item(raw_item)
+        if not text:
+            return None
+        return {
+            "type": "agent.message",
+            "content": [{"type": "text", "text": text}],
+            "source": "openai_agents_sdk",
+        }
+
     if name == "tool_called":
         return {
             "type": "agent.tool_use",
-            "name": getattr(item, "name", "tool"),
-            "input": _jsonish(getattr(item, "arguments", None)),
+            "name": _raw_item_name(raw_item, fallback="tool"),
+            "input": _tool_input_from_raw_item(raw_item),
+            "tool_use_id": _raw_item_id(raw_item),
+            "source": "openai_agents_sdk",
+        }
+    if name == "tool_search_called":
+        return {
+            "type": "agent.tool_use",
+            "name": _raw_item_name(raw_item, fallback="tool_search"),
+            "input": _raw_item_summary(raw_item),
+            "tool_use_id": _raw_item_id(raw_item),
+            "source": "openai_agents_sdk",
+        }
+    if name == "mcp_approval_requested":
+        return {
+            "type": "agent.mcp_tool_use",
+            "name": _raw_item_name(raw_item, fallback="mcp_tool"),
+            "input": _raw_item_summary(raw_item),
+            "tool_use_id": _raw_item_id(raw_item),
+            "permission_policy": {"type": "always_ask"},
+            "requires_confirmation": True,
+            "source": "openai_agents_sdk",
         }
     if name == "tool_output":
         return {
             "type": "agent.tool_result",
-            "name": getattr(item, "name", "tool"),
-            "content": [{"type": "text", "text": str(getattr(item, "output", ""))}],
+            "name": _raw_item_name(raw_item, fallback="tool"),
+            "tool_use_id": _raw_item_id(raw_item),
+            "content": [{"type": "text", "text": _tool_output_from_item(item, raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "tool_search_output_created":
+        return {
+            "type": "agent.tool_result",
+            "name": _raw_item_name(raw_item, fallback="tool_search"),
+            "tool_use_id": _raw_item_id(raw_item),
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "mcp_approval_response":
+        return {
+            "type": "agent.mcp_tool_result",
+            "name": _raw_item_name(raw_item, fallback="mcp_tool"),
+            "tool_use_id": _raw_item_id(raw_item),
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "mcp_list_tools":
+        return {
+            "type": "agent.mcp_list_tools",
+            "name": _raw_item_name(raw_item, fallback="mcp"),
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "reasoning_item_created":
+        return {
+            "type": "span.reasoning",
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "handoff_requested":
+        return {
+            "type": "agent.handoff_requested",
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
+        }
+    if name == "handoff_occured":
+        return {
+            "type": "agent.handoff_occurred",
+            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "source": "openai_agents_sdk",
         }
     return None
+
+
+def _raw_stream_item(item) -> Any:
+    if item is None:
+        return {}
+    return getattr(item, "raw_item", item)
+
+
+def _text_from_raw_openai_item(raw_item) -> str:
+    content = _raw_get(raw_item, "content")
+    if not isinstance(content, list):
+        text = _raw_get(raw_item, "text") or _raw_get(raw_item, "output_text")
+        return str(text) if text else ""
+    parts: list[str] = []
+    for block in content:
+        text = _raw_get(block, "text") or _raw_get(block, "output_text")
+        if text:
+            parts.append(str(text))
+    return "\n".join(parts)
+
+
+def _tool_input_from_raw_item(raw_item) -> Any:
+    arguments = _raw_get(raw_item, "arguments")
+    if isinstance(arguments, str):
+        try:
+            return json.loads(arguments)
+        except json.JSONDecodeError:
+            return arguments
+    return _jsonish(arguments) if arguments is not None else _raw_item_summary(raw_item)
+
+
+def _tool_output_from_item(item, raw_item) -> str:
+    output = getattr(item, "output", None)
+    if output is None:
+        output = _raw_get(raw_item, "output") or _raw_get(raw_item, "content")
+    if isinstance(output, str):
+        return output
+    return json.dumps(_jsonish(output), separators=(",", ":"), sort_keys=True)
+
+
+def _raw_item_name(raw_item, *, fallback: str) -> str:
+    for key in ("name", "tool_name", "server_label", "type"):
+        value = _raw_get(raw_item, key)
+        if value:
+            return str(value)
+    return fallback
+
+
+def _raw_item_id(raw_item) -> str | None:
+    for key in ("call_id", "id", "tool_call_id"):
+        value = _raw_get(raw_item, key)
+        if value:
+            return str(value)
+    return None
+
+
+def _raw_item_summary(raw_item) -> Any:
+    return _jsonish(raw_item)
+
+
+def _raw_get(value, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
 
 
 def _safe_state(result) -> dict[str, Any] | None:
