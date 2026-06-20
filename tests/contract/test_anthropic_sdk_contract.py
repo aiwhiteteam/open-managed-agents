@@ -1127,6 +1127,26 @@ async def test_anthropic_sdk_deployments_contract():
         assert archived.archived_at is not None
 
 
+async def test_anthropic_sdk_deployment_agent_string_pins_latest_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(name="SDK Deployment Short Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
+        agent_v2 = await client.beta.agents.update(agent.id, version=agent.version, system="v2", **BETA_KWARG)
+        environment = await client.beta.environments.create(
+            name="SDK Deployment Short Environment",
+            config={"type": "cloud"},
+            **BETA_KWARG,
+        )
+
+        deployment = await client.beta.deployments.create(
+            name="SDK Short Agent Deployment",
+            agent=agent.id,
+            environment_id=environment.id,
+            initial_events=[{"type": "user.message", "content": [{"type": "text", "text": "Run."}]}],
+            **BETA_KWARG,
+        )
+        assert deployment.agent.version == agent_v2.version
+
+
 async def test_anthropic_sdk_user_profiles_contract():
     async with anthropic_client() as (client, _):
         profile = await client.beta.user_profiles.create(

@@ -80,6 +80,40 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     assert len(scheduled_deployment["schedule"]["upcoming_runs_at"]) == 5
 
 
+async def test_deployment_agent_string_pins_latest_version(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.patch(
+        f"/v1/agents/{agent['id']}",
+        headers=TEST_HEADERS,
+        json={"version": agent["version"], "system": "v2"},
+    )
+    assert response.status_code == 200, response.text
+    agent_v2 = response.json()
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Latest agent deployment",
+            "agent": agent["id"],
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "latest"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+    assert deployment["agent"]["version"] == agent_v2["version"]
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    run = response.json()
+    response = await client.get(f"/v1/sessions/{run['session_id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["agent_version"] == agent_v2["version"]
+
+
 async def test_deployment_run_validates_session_vault_ids(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

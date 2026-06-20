@@ -1223,7 +1223,7 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     if status not in {"active", "paused"}:
         raise HTTPException(status_code=422, detail="Deployment status must be active or paused")
     normalized["status"] = status
-    normalized["agent"] = _deployment_agent_response(normalized.get("agent"))
+    normalized["agent"] = _deployment_agent_reference_input(normalized.get("agent"))
     normalized.setdefault("environment_id", "")
     normalized.setdefault("initial_events", [])
     normalized.setdefault("resources", [])
@@ -1262,16 +1262,11 @@ async def _validate_deployment_definition(db: AsyncSession, data: dict[str, Any]
     if not name:
         raise HTTPException(status_code=422, detail="Deployment name is required")
 
-    agent_ref = _deployment_agent_response(data.get("agent"))
+    agent_ref = await _resolve_deployment_agent_reference(db, data.get("agent"))
+    data["agent"] = agent_ref
     agent_id = str(agent_ref.get("id") or "")
     if not agent_id:
         raise HTTPException(status_code=422, detail="Deployment agent is required")
-    agent = await agents_q.get_agent(db, agent_id)
-    if agent is None or agent.archived_at is not None:
-        raise HTTPException(status_code=422, detail="Deployment agent not found")
-    agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=int(agent_ref.get("version") or 1))
-    if agent_version is None:
-        raise HTTPException(status_code=422, detail="Deployment agent version not found")
 
     environment_id = str(data.get("environment_id") or "")
     if not environment_id:
@@ -1281,6 +1276,33 @@ async def _validate_deployment_definition(db: AsyncSession, data: dict[str, Any]
         raise HTTPException(status_code=422, detail="Deployment environment not found")
 
     _validate_deployment_initial_events(data.get("initial_events") or [])
+
+
+def _deployment_agent_reference_input(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"type": "agent", "id": value}
+    if isinstance(value, dict):
+        agent_id = value.get("id") or value.get("agent_id") or ""
+        normalized: dict[str, Any] = {"type": "agent", "id": str(agent_id)}
+        if value.get("version") is not None:
+            normalized["version"] = int(value["version"])
+        return normalized
+    return {"type": "agent", "id": ""}
+
+
+async def _resolve_deployment_agent_reference(db: AsyncSession, value: Any) -> dict[str, Any]:
+    agent_ref = _deployment_agent_reference_input(value)
+    agent_id = str(agent_ref.get("id") or "")
+    if not agent_id:
+        return agent_ref
+    agent = await agents_q.get_agent(db, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=422, detail="Deployment agent not found")
+    version = agent.active_version if agent_ref.get("version") is None else int(agent_ref["version"])
+    agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=version)
+    if agent_version is None:
+        raise HTTPException(status_code=422, detail="Deployment agent version not found")
+    return {"type": "agent", "id": agent.id, "version": version}
 
 
 def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
