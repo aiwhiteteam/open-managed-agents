@@ -1,4 +1,5 @@
 import hashlib
+import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
@@ -117,7 +118,22 @@ async def archive_credential(vault_id: str, credential_id: str, db: AsyncSession
 @router.post("/v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate")
 async def validate_credential(vault_id: str, credential_id: str, db: AsyncSession = Depends(get_session)):
     credential = await _must_exist(db, credential_id, "credential", parent_id=vault_id)
-    auth = credential.data.get("auth") or {}
+    validation = _credential_validation_payload(credential, vault_id=vault_id)
+    data = dict(credential.data or {})
+    metadata = dict(data.get("metadata") or {})
+    last_validation = {
+        key: (value.isoformat() if isinstance(value, datetime) else value)
+        for key, value in validation.items()
+    }
+    metadata["last_validation"] = json.dumps(last_validation, separators=(",", ":"), sort_keys=True)
+    data["metadata"] = metadata
+    await res_q.update_resource(db, credential, data=data)
+    await db.commit()
+    return validation
+
+
+def _credential_validation_payload(credential, *, vault_id: str) -> dict[str, Any]:
+    auth = (credential.data or {}).get("auth") or {}
     return {
         "type": "vault_credential_validation",
         "vault_id": vault_id,

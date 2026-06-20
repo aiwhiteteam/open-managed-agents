@@ -1,3 +1,4 @@
+import json
 from urllib.parse import parse_qs, urlparse
 
 from app.db.engine import session_scope
@@ -193,6 +194,7 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     )
     assert response.status_code == 404
 
+
     response = await client.post(
         "/v1/memory_stores",
         headers=TEST_HEADERS,
@@ -223,6 +225,52 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
     assert response.json()["type"] == "deployment_run"
+
+
+async def test_vault_credential_validation_is_persisted_in_metadata(client):
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "MCP Vault"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Linear MCP",
+            "metadata": {"team": "platform"},
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "secret-access-token",
+                "refresh": {"refresh_token": "secret-refresh-token"},
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}/mcp_oauth_validate",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    validation = response.json()
+    assert validation["type"] == "vault_credential_validation"
+    assert validation["status"] == "unknown"
+    assert validation["has_refresh_token"] is True
+
+    response = await client.get(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert updated["metadata"]["team"] == "platform"
+    last_validation = json.loads(updated["metadata"]["last_validation"])
+    assert last_validation["credential_id"] == credential["id"]
+    assert last_validation["status"] == "unknown"
+    assert last_validation["has_refresh_token"] is True
+    assert "secret" not in str(last_validation)
 
 
 async def test_user_profile_enrollment_url_persists_hashed_token(client):
