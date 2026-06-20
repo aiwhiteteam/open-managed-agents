@@ -76,7 +76,7 @@ def test_openai_stream_mcp_approval_maps_to_confirmable_tool_use():
     assert mapped["permission_policy"] == {"type": "always_ask"}
 
 
-def test_openai_stream_reasoning_maps_to_span_event():
+def test_openai_stream_reasoning_maps_to_agent_thinking_event():
     event = _run_item_event(
         "reasoning_item_created",
         {"type": "reasoning", "summary": [{"text": "checked constraints"}]},
@@ -84,7 +84,7 @@ def test_openai_stream_reasoning_maps_to_span_event():
 
     mapped = _map_openai_stream_event(event)
 
-    assert mapped["type"] == "span.reasoning"
+    assert mapped["type"] == "agent.thinking"
     assert mapped["content"][0]["json"]["type"] == "reasoning"
 
 

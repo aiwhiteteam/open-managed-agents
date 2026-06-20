@@ -1343,7 +1343,7 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
         }
     if name == "reasoning_item_created":
         return {
-            "type": "span.reasoning",
+            "type": "agent.thinking",
             "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
             "source": "openai_agents_sdk",
         }
