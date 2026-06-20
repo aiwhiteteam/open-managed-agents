@@ -18,6 +18,7 @@ from app.db.queries import sessions as sessions_q
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 from app.pagination import filter_created_at, paginate, sort_by_created_at
+from app.session_resources import create_session_resource
 
 router = APIRouter(tags=["managed resources"], dependencies=[Depends(require_api_access)])
 
@@ -1335,7 +1336,7 @@ def _deployment_response(resource) -> dict[str, Any]:
     response["environment_id"] = str(data.get("environment_id") or "")
     response["initial_events"] = list(data.get("initial_events") or [])
     response["metadata"] = dict(data.get("metadata") or {})
-    response["resources"] = list(data.get("resources") or [])
+    response["resources"] = _deployment_resources_response(data.get("resources") or [])
     response["vault_ids"] = list(data.get("vault_ids") or [])
     response["description"] = data.get("description")
     response["schedule"] = _deployment_schedule_response(data.get("schedule"))
@@ -1352,6 +1353,47 @@ def _deployment_run_response(resource) -> dict[str, Any]:
     response["session_id"] = data.get("session_id")
     response["error"] = data.get("error")
     response["trigger_context"] = data.get("trigger_context") or _trigger_context(data)
+    return response
+
+
+def _deployment_resources_response(resources: list[Any]) -> list[dict[str, Any]]:
+    response: list[dict[str, Any]] = []
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        resource_type = resource.get("type")
+        if resource_type == "github_repository":
+            item = {
+                "type": "github_repository",
+                "url": str(resource.get("url") or ""),
+            }
+            if resource.get("mount_path") is not None:
+                item["mount_path"] = resource["mount_path"]
+            if resource.get("checkout") is not None:
+                item["checkout"] = resource["checkout"]
+            response.append(item)
+        elif resource_type == "file":
+            item = {
+                "type": "file",
+                "file_id": str(resource.get("file_id") or ""),
+            }
+            if resource.get("mount_path") is not None:
+                item["mount_path"] = resource["mount_path"]
+            response.append(item)
+        elif resource_type == "memory_store":
+            item = {
+                "type": "memory_store",
+                "memory_store_id": str(resource.get("memory_store_id") or ""),
+            }
+            if resource.get("access") is not None:
+                item["access"] = resource["access"]
+            if resource.get("instructions") is not None:
+                item["instructions"] = resource["instructions"]
+            response.append(item)
+        else:
+            item = dict(resource)
+            item.pop("authorization_token", None)
+            response.append(item)
     return response
 
 
@@ -1430,7 +1472,7 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
         db,
         run_input.get("vault_ids") or data.get("vault_ids") or [],
     )
-    return await sessions_q.create_session(
+    session = await sessions_q.create_session(
         db,
         agent=agent,
         agent_version=version,
@@ -1439,6 +1481,14 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
         metadata=metadata,
         vault_ids=vault_ids,
     )
+    for resource_data in run_input.get("resources") or data.get("resources") or []:
+        await create_session_resource(
+            db,
+            session,
+            resource_data,
+            allowed_types={"file", "github_repository", "memory_store"},
+        )
+    return session
 
 
 async def _validate_deployment_vault_ids(db: AsyncSession, vault_ids: list[Any]) -> list[str]:

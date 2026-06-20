@@ -108,6 +108,8 @@ Uploaded file mounts create session-scoped object-storage copies. Production fil
 | run | `POST /v1/deployments/{deployment_id}/run` | partial |
 | unpause | `POST /v1/deployments/{deployment_id}/unpause` | partial |
 
+Deployment resources use the SDK session-resource union for files, GitHub repositories, and memory stores. Deployment responses omit write-only GitHub authorization tokens, and manual deployment runs mount deployment resources onto the created session.
+
 ## Deployment Runs
 
 | Operation | Route | Status |

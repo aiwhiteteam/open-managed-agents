@@ -1016,6 +1016,15 @@ async def test_anthropic_sdk_deployments_contract():
             config={"type": "cloud"},
             **BETA_KWARG,
         )
+        uploaded = await client.beta.files.upload(
+            file=("deployment-resource.txt", b"deployment resource", "text/plain"),
+            **BETA_KWARG,
+        )
+        memory_store = await client.beta.memory_stores.create(
+            name="SDK Deployment Memory",
+            description="Deployment memory.",
+            **BETA_KWARG,
+        )
 
         deployment = await client.beta.deployments.create(
             name="SDK Contract Deployment",
@@ -1023,7 +1032,26 @@ async def test_anthropic_sdk_deployments_contract():
             environment_id=environment.id,
             initial_events=[{"type": "user.message", "content": [{"type": "text", "text": "Run report."}]}],
             metadata={"keep": "yes", "drop": "soon"},
-            resources=[],
+            resources=[
+                {
+                    "type": "file",
+                    "file_id": uploaded.id,
+                    "mount_path": "/workspace/deployment-resource.txt",
+                },
+                {
+                    "type": "github_repository",
+                    "url": "https://github.com/example/deployment-repo",
+                    "mount_path": "/workspace/deployment-repo",
+                    "authorization_token": "ghp_secret",
+                    "checkout": {"type": "branch", "name": "main"},
+                },
+                {
+                    "type": "memory_store",
+                    "memory_store_id": memory_store.id,
+                    "access": "read_only",
+                    "instructions": "Use deployment memory.",
+                },
+            ],
             schedule={"type": "cron", "expression": "0 9 * * *", "timezone": "UTC"},
             vault_ids=[],
             **BETA_KWARG,
@@ -1032,6 +1060,9 @@ async def test_anthropic_sdk_deployments_contract():
         assert deployment.agent.id == agent.id
         assert deployment.environment_id == environment.id
         assert deployment.schedule.expression == "0 9 * * *"
+        assert {resource.type for resource in deployment.resources} == {"file", "github_repository", "memory_store"}
+        deployment_resources_by_type = {resource.type: resource for resource in deployment.resources}
+        assert "authorization_token" not in deployment_resources_by_type["github_repository"].model_dump()
 
         updated = await client.beta.deployments.update(
             deployment.id,
@@ -1055,6 +1086,13 @@ async def test_anthropic_sdk_deployments_contract():
         assert run.agent.id == agent.id
         assert run.trigger_context.type == "manual"
         assert run.session_id is not None
+
+        run_session = await client.beta.sessions.retrieve(run.session_id, **BETA_KWARG)
+        run_resources_by_type = {resource.type: resource for resource in run_session.resources}
+        assert run_resources_by_type["file"].file_id == uploaded.id
+        assert run_resources_by_type["github_repository"].url == "https://github.com/example/deployment-repo"
+        assert "authorization_token" not in run_resources_by_type["github_repository"].model_dump()
+        assert run_resources_by_type["memory_store"].memory_store_id == memory_store.id
 
         deployment_sessions = [
             item async for item in client.beta.sessions.list(deployment_id=deployment.id, limit=20, **BETA_KWARG)
