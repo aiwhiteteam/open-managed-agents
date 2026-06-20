@@ -182,7 +182,7 @@ The current SDK exposes webhook event types and unwrap helpers in beta, but this
 
 | Operation | Route | Status |
 | --- | --- | --- |
-| unwrap/verify helpers | SDK local helper | todo |
+| unwrap/verify helpers | SDK local helper | partial; Standard Webhooks-compatible helpers in `app.webhooks` |
 
 ## User Profiles
 

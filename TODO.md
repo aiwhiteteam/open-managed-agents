@@ -20,7 +20,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Implement vault credential lifecycle: enrollment, refresh, runtime resolution, revocation, and webhook emission. Response redaction, archive/delete secret purge, and persisted validation metadata have local coverage.
 - Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events. A deterministic local `span.outcome_evaluation` MVP exists; real grader LLM loops remain TODO.
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent. Delegated agent session threads are created from pinned rosters, and primary thread event listing includes unassigned session events; full delegated execution/routing remains TODO.
-- Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
+- Implement webhook delivery semantics: endpoint registration, event IDs, organization/workspace identifiers, retries, idempotency, and failure disabling. Standard Webhooks-compatible signing, verification, freshness checks, and event-envelope unwrap helpers have local coverage.
 - Implement deployment scheduler semantics: autonomous scheduled session creation, retries, and lease-safe workers. Cron/timezone validation, `upcoming_runs_at`/`last_run_at` bookkeeping, manual run session linkage, and deployment-run vault validation have local coverage.
 - Implement sandbox/environment policy enforcement through provider interfaces: network allowlists, MCP/package-manager exceptions, resource limits, and production cloud sandbox backends. Policy config validation and runtime sandbox-state summaries have local coverage.
 
@@ -108,5 +108,5 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Webhooks
 
 - Implement webhook endpoint registration when the official API exposes CRUD for it.
-- Implement signature generation/verification compatible with Anthropic SDK helpers.
+- Keep Standard Webhooks-compatible signature generation/verification covered against Anthropic SDK helper semantics.
 - Emit all session, vault, credential, and deployment webhook event types.
