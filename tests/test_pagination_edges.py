@@ -30,6 +30,17 @@ async def test_file_id_cursor_rejects_unknown_cursor(client):
     assert "Invalid pagination cursor" in response.json()["error"]["message"]
 
 
+async def test_file_id_cursor_rejects_after_and_before_together(client):
+    response = await client.get(
+        "/v1/files",
+        headers=TEST_HEADERS,
+        params={"after_id": "file_a", "before_id": "file_b"},
+    )
+
+    assert response.status_code == 400
+    assert "Only one of after_id or before_id" in response.json()["error"]["message"]
+
+
 async def test_created_at_filters_accept_sdk_aliases(client):
     for index in range(2):
         response = await client.post(
