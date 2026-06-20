@@ -17,7 +17,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
-from app.event_validation import validate_system_message_batch
+from app.event_validation import validate_system_message_batch, validate_user_define_outcome_event
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
 from app.models.resources import GenericBody, deleted_response, resource_to_response
@@ -1896,6 +1896,8 @@ def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
         event_type = str(raw_event.get("type") or "")
         if event_type not in {"system.message", "user.define_outcome", "user.message"}:
             raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
+        if event_type == "user.define_outcome":
+            validate_user_define_outcome_event(raw_event)
         event_types.append(event_type)
     validate_system_message_batch(event_types)
     if "user.message" not in event_types:

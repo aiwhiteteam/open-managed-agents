@@ -677,8 +677,8 @@ async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
             "events": [
                 {
                     "type": "user.define_outcome",
-                    "objective": "Produce a customer-ready summary.",
-                    "rubric": {"must_include": ["customer"]},
+                    "description": "Produce a customer-ready summary.",
+                    "rubric": {"type": "text", "content": "Must include the customer."},
                     "max_iterations": 2,
                 }
             ]
@@ -698,6 +698,30 @@ async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
     session = response.json()
     assert session["outcome_evaluations"][0]["event_id"] == outcome_event["id"]
     assert session["outcome_evaluations"][0]["grader_context"]["max_iterations"] == 2
+
+
+async def test_define_outcome_shape_is_validated(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    invalid_events = [
+        {"type": "user.define_outcome", "rubric": {"type": "text", "content": "Pass."}},
+        {"type": "user.define_outcome", "description": "Do work.", "rubric": {"must_include": ["work"]}},
+        {
+            "type": "user.define_outcome",
+            "description": "Do work.",
+            "rubric": {"type": "text", "content": "Pass."},
+            "max_iterations": 21,
+        },
+    ]
+    for event in invalid_events:
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            headers=TEST_HEADERS,
+            json={"events": [event]},
+        )
+        assert response.status_code == 422, response.text
 
 
 async def test_primary_session_thread_archive_is_persisted(client):

@@ -1216,7 +1216,8 @@ def _outcome_evaluation_from_history(history, result: RuntimeResult) -> dict[str
 
 def _outcome_spec(payload: dict[str, Any]) -> dict[str, Any]:
     objective = str(
-        payload.get("objective")
+        payload.get("description")
+        or payload.get("objective")
         or payload.get("goal")
         or payload.get("name")
         or _text_from_payload(payload)
@@ -1224,11 +1225,13 @@ def _outcome_spec(payload: dict[str, Any]) -> dict[str, Any]:
     )
     rubric = payload.get("rubric") or payload.get("criteria") or payload.get("success_criteria")
     try:
-        max_iterations = int(payload.get("max_iterations") or payload.get("max_turns") or 1)
+        max_iterations = int(payload.get("max_iterations") or payload.get("max_turns") or 3)
     except (TypeError, ValueError):
-        max_iterations = 1
+        max_iterations = 3
     if max_iterations < 1:
         max_iterations = 1
+    if max_iterations > 20:
+        max_iterations = 20
     return {
         "objective": objective,
         "rubric": rubric,

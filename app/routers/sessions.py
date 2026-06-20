@@ -15,7 +15,7 @@ from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
-from app.event_validation import validate_system_message_batch
+from app.event_validation import validate_system_message_batch, validate_user_define_outcome_event
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse
 from app.models.events import (
@@ -614,6 +614,9 @@ async def stream_session_thread_events(
 async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -> None:
     event_types = [event.type for event in event_inputs]
     validate_system_message_batch(event_types)
+    for event_input in event_inputs:
+        if event_input.type == "user.define_outcome":
+            validate_user_define_outcome_event(event_input.model_dump(mode="json"))
     if session.status in ACTIVE_STATUSES:
         if event_types == ["user.interrupt"]:
             return
