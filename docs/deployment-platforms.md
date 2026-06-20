@@ -4,7 +4,7 @@ This project follows a portable deployment shape:
 
 - One application framework: FastAPI.
 - One container contract: Docker/OCI image listening on `$PORT` or `8080`.
-- One process model: web, worker, migration.
+- One default process model: web and migration, with an optional worker for self-hosted queue execution.
 - Platform-specific deployment files only under `deploy/`.
 
 ## Process Commands
@@ -12,7 +12,7 @@ This project follows a portable deployment shape:
 | Process | Command | Notes |
 | --- | --- | --- |
 | Web | `scripts/start-web.sh` | Runs `uvicorn app.main:app` on `$PORT`. |
-| Worker | `scripts/start-worker.sh` | Runs `oma-worker` for queued self-hosted work. |
+| Worker | `scripts/start-worker.sh` | Optional; runs `oma-worker` for queued `self_hosted` work. |
 | Migration | `scripts/migrate.sh` | Runs `alembic upgrade head`; execute once per deploy. |
 
 ## Supported Targets
@@ -20,7 +20,7 @@ This project follows a portable deployment shape:
 | Platform | Files | Fit |
 | --- | --- | --- |
 | Google Cloud Run | `deploy/gcp/` | Best managed-container default for GCP and small teams. |
-| Render | `deploy/render/render.yaml` | Simple PaaS with Docker, workers, managed Postgres, and pre-deploy commands. |
+| Render | `deploy/render/render.yaml` | Simple PaaS with Docker, optional workers, managed Postgres, and pre-deploy commands. |
 | Railway | `deploy/railway/` | Fast MVP deployment with Docker and service-level start commands. |
 | Fly.io | `deploy/fly/fly.toml` | Good for multi-region or long-running process deployments. |
 | AWS ECS/Fargate | `deploy/aws/ecs-fargate/` | Enterprise AWS baseline; more infrastructure is required. |

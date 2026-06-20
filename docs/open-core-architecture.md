@@ -108,7 +108,7 @@ Core tables must not require hosted tables to exist.
 
 ## Deployment Files
 
-This repo is allowed to contain production-ready self-hosting and reference deployment files:
+This repo is allowed to contain production-ready self-hosting and reference deployment files. The worker files are optional and exist for `self_hosted` queue execution, not for the default hosted-provider path:
 
 ```text
 Dockerfile

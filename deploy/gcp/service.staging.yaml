@@ -19,7 +19,7 @@ spec:
             - name: APP_ENV
               value: staging
             - name: OMA_RUNTIME_BACKEND
-              value: auto
+              value: openai
             - name: OMA_REQUIRE_BETA_HEADER
               value: "true"
             - name: OMA_REQUIRE_ANTHROPIC_VERSION_HEADER

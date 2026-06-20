@@ -58,7 +58,7 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | Cloud sandbox | Requires a production remote sandbox provider with network/package policy enforcement and filesystem state. | TODO |
 | Self-hosted sandbox | `self_hosted` environment acts as a work queue claimed by external workers. | Partial |
 | Session lifecycle | Session creation provisions the sandbox and starts `idle`; user/system events drive work. Valid states are `idle`, `running`, `rescheduling`, `terminated`. | Partial; core state guards implemented |
-| Session-local agent update | Session `agent.tools` and `agent.mcp_servers` can be fully replaced while idle without mutating agent versions. | Partial; session overlay implemented |
+| Session-local agent update | Session `agent.tools` and `agent.mcp_servers` can be fully replaced while idle without mutating agent versions. | Partial; SDK strict response contract verified, runtime semantics still partial |
 | Event protocol | User/system events are inputs; session/span/agent events are outputs; queued input events may have `processed_at = null`. | Partial |
 | Custom tool continuation | `agent.custom_tool_use` pauses with `requires_action`; caller sends `user.custom_tool_result`. | Partial; MVP continuation contract implemented |
 | Tool confirmation | `agent.tool_use` or `agent.mcp_tool_use` may pause; caller sends `user.tool_confirmation`. | Partial; MVP continuation contract implemented |
@@ -150,17 +150,17 @@ Webhooks and scheduled deployments are production semantics, not just CRUD:
 
 Prefer this order when closing compatibility gaps:
 
-1. Agent/version contract and multiagent roster pinning.
-2. Complete session state machine edge cases and durable `rescheduling`.
-3. Complete event protocol, including processed input updates and full event unions.
-4. Wire custom tool continuation and tool confirmation into persisted OpenAI Agents SDK run state.
-5. File/session resource copy semantics.
-6. Durable queue/worker provider and Cloud Run-safe execution.
-7. Sandbox provider abstraction and cloud/self-hosted implementations.
-8. MCP runtime auth and permission enforcement.
-9. Vault secret manager provider and credential lifecycle.
-10. Memory runtime tools and mounts.
-11. Multiagent threads.
-12. Outcomes/grader loop.
-13. Webhooks and deployment scheduler.
-14. Official Anthropic SDK contract tests.
+1. Official Anthropic SDK contract tests for every changed surface.
+2. Agent/version contract and multiagent roster pinning.
+3. Complete session state machine edge cases and durable `rescheduling`.
+4. Complete event protocol, including processed input updates and full event unions.
+5. Wire custom tool continuation and tool confirmation into persisted OpenAI Agents SDK run state.
+6. File/session resource copy semantics.
+7. Durable queue/worker provider and Cloud Run-safe execution.
+8. Sandbox provider abstraction and cloud/self-hosted implementations.
+9. MCP runtime auth and permission enforcement.
+10. Vault secret manager provider and credential lifecycle.
+11. Memory runtime tools and mounts.
+12. Multiagent threads.
+13. Outcomes/grader loop.
+14. Webhooks and deployment scheduler.

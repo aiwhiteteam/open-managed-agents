@@ -44,9 +44,9 @@ variable "openai_api_key_secret_arn" {
   description = "Secrets Manager ARN containing OPENAI_API_KEY."
 }
 
-variable "oma_api_keys_secret_arn" {
+variable "oma_api_key_secret_arn" {
   type        = string
-  description = "Secrets Manager ARN containing OMA_API_KEYS."
+  description = "Secrets Manager ARN containing OMA_API_KEY."
 }
 
 variable "s3_secret_access_key_secret_arn" {

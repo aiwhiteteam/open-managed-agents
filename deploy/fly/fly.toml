@@ -9,8 +9,7 @@ primary_region = "iad"
 
 [env]
   APP_ENV = "production"
-  OMA_RUNTIME_BACKEND = "auto"
-  OMA_STORAGE_BACKEND = "s3"
+  OMA_RUNTIME_BACKEND = "openai"
   RUN_MIGRATIONS = "false"
   WEB_CONCURRENCY = "1"
 

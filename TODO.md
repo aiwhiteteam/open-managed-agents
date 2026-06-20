@@ -11,7 +11,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Keep exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core resolves every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
 - Complete durable session state machine semantics: real `rescheduling`, retry windows, and persisted OpenAI Agents SDK resume state.
 - Wire `requires_action` pauses for custom tools and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
-- Verify session-local agent configuration update request/response shapes against the official SDK.
+- Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events, with `processed_at = null` for queued input events.
 - Implement file/resource copy semantics. Uploaded files can be mounted into sessions, and session-produced files should become session-scoped file references.
@@ -34,25 +34,21 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Object storage keys must include `workspaces/{workspace_id}/...`.
 - Provider interfaces should stay narrow and replaceable: auth, quota, audit logging, secret manager, sandbox, queue, webhook delivery, and object storage.
 - Default OSS providers should remain self-hosted friendly and usable with a single default workspace.
-- Add cross-workspace non-visibility tests for every new major resource family.
+- Keep cross-workspace non-visibility tests green for every major resource family, including agents, environments, files, skills, vaults, credentials, memory stores, memories, deployments, deployment runs, and user profiles.
 
 ## Contract Extraction
 
 - Maintain `tests/contract/test_anthropic_sdk_contract.py`, which points the official Anthropic Python SDK at this service with strict response validation.
-- Expand SDK contract coverage beyond the current passing surface: SDK beta resource discovery, agent CRUD, and files upload/list/download/delete.
-- Fix agent versions response shape. The official SDK currently expects agent-shaped version snapshots, while the MVP endpoint returns `agent_version` objects.
-- Fix environment response shape. The official SDK requires `description` in environment resources.
-- Fix session response shape. The official SDK requires fields such as `agent`, `resources`, `outcome_evaluations`, `stats`, `usage`, and `vault_ids`.
-- Fix skill multipart and response shapes. Skill responses do not yet match official SDK source/version/directory models exactly.
-- Verify pagination parameter names and envelopes against the SDK for every list endpoint.
-- Verify exact deleted-resource response shapes for every resource family.
+- Keep the current passing SDK strict surface green: beta resource discovery, agent CRUD, agent versions, environment lifecycle, session lifecycle/events/resources/threads, files upload/list/download/delete, skill lifecycle/version lifecycle, vault/credential lifecycle, memory store/memory/memory-version lifecycle, deployment/deployment-run lifecycle, and user profile lifecycle.
+- Expand pagination/filter contract tests from representative SDK coverage to exhaustive per-route edge cases, especially expired cursor behavior and less common filters. Invalid cursor handling, max limit clamping, timestamp aliases, and core SDK pagination paths have test coverage.
+- Verify exact deleted-resource response shapes for future route families as they are added.
 
 ## Runtime Semantics
 
 - Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub deployment and fencing locks.
 - Implement true resumable OpenAI Agents SDK `RunState` persistence.
 - Map OpenAI Agents SDK streaming events into the full Claude Managed Agents event union.
-- Add integration tests with mocked OpenAI-compatible endpoints for DeepSeek, MiniMax, and at least one custom provider.
+- Add HTTP-level runtime integration tests with mocked OpenAI-compatible endpoints. Provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers.
 - Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
 - Implement session `rescheduling` behavior for transient failures.
 - Expand session state-machine tests for worker crashes, queued continuation batches, and `user.interrupt`.
@@ -62,7 +58,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Keep core resource tables scoped by `workspace_id`; do not add organization/billing/RBAC dependencies to core.
 - Add DB-backed API keys/service accounts as an optional provider, still resolving to `CurrentWorkspace`.
 - Add provider interfaces for quota, audit logging, secret manager, and hosted sandbox fleet.
-- Add cross-workspace isolation tests for every new route group.
+- Keep cross-workspace isolation tests current for every new route group.
 - Implement organizations, members, billing, SSO, and RBAC only in a hosted/private layer that imports core.
 
 ## Sandbox And Environments
@@ -76,11 +72,13 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 - Verify the zip archive response shape against Claude skill downloads and official SDK clients.
 - Implement exact SDK multipart field compatibility for `files`.
+- Replace MVP sequential skill version strings (`"1"`, `"2"`) with official-compatible version identifiers and lifecycle semantics.
 
 ## Files And Resources
 
 - Add content deduplication, malware/content scanning, and object storage lifecycle policies.
-- Implement exact session resource union types for file, GitHub repository, and future resource kinds.
+- Implement production filesystem copy/mount semantics for the SDK-validated session resource union.
+- Keep session resource union coverage current if Anthropic adds resource kinds beyond `file`, `github_repository`, and `memory_store`.
 
 ## Vaults
 
@@ -91,8 +89,8 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Memory Stores
 
-- Extract Memory Store routes into typed request/response models matching the official SDK.
-- Add indexed Postgres columns or expression indexes for memory `path_key` lookups before production scale.
+- Extract Memory Store routes into typed request/response models instead of the current generic-resource compatibility layer.
+- Add production-scale prefix/search indexes for Memory Store queries. Exact path lookup uses indexed `managed_resources.name` as the stored `path_key`.
 - Add semantic search/vector indexing if memories need retrieval beyond exact path and prefix lookup.
 - Integrate memory tools into the runtime context builder.
 

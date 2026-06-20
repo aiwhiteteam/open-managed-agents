@@ -1,37 +1,45 @@
 # OpenAI-Compatible Providers
 
-The runtime uses OpenAI Agents SDK as the execution engine. Provider switching is handled by `app.runtime.providers`.
+The default runtime uses the OpenAI Agents SDK with the official OpenAI provider.
+Most deployments should only configure:
 
-## Built-In Providers
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL` when intentionally pointing the SDK at a compatible endpoint
+- `OMA_DEFAULT_OPENAI_MODEL`
 
-| Provider | API key env | Base URL | Default model | Responses API |
-| --- | --- | --- | --- | --- |
-| `openai` | `OPENAI_API_KEY` | `OPENAI_BASE_URL` or official default | `OMA_DEFAULT_OPENAI_MODEL` | `OPENAI_USE_RESPONSES` |
-| `deepseek` | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` | `DEEPSEEK_DEFAULT_MODEL` | false |
-| `minimax` | `MINIMAX_API_KEY` | `MINIMAX_BASE_URL` | `MINIMAX_DEFAULT_MODEL` | false |
+## Advanced Custom Providers
 
-DeepSeek and MiniMax are treated as OpenAI-compatible Chat Completions providers, so they run through `OpenAIProvider(..., use_responses=false)`.
+OpenAI-compatible provider routing is an advanced escape hatch. It is configured
+through `OMA_OPENAI_COMPATIBLE_PROVIDERS`, not through provider-specific built-ins.
 
-## Capability Map
+Set `OMA_OPENAI_COMPATIBLE_PROVIDERS` to a JSON object:
 
-Provider behavior is not assumed to be identical. `app.runtime.providers` exposes a capability map used by the runtime:
+```json
+{
+  "example": {
+    "api_key_env": "EXAMPLE_API_KEY",
+    "base_url": "https://api.example.com/v1",
+    "default_model": "example-chat",
+    "use_responses": false,
+    "capabilities": {
+      "streaming": true,
+      "tool_calls": true,
+      "hosted_tools": false,
+      "multimodal_input": false,
+      "reasoning_traces": false,
+      "unsupported_parameters": ["previous_response_id", "conversation_id", "prompt"]
+    }
+  }
+}
+```
 
-| Provider | Streaming | Tool calls | Responses API | Hosted tools | Multimodal input | Reasoning traces |
-| --- | --- | --- | --- | --- | --- | --- |
-| `openai` | yes | yes | configurable | yes when Responses is enabled | yes | yes when Responses is enabled |
-| `deepseek` | yes | yes | no | no | no by default | no |
-| `minimax` | yes | yes | no | no | no by default | no |
-| custom | yes by default | yes by default | no by default | no by default | no by default | no by default |
-
-Custom providers can override `capabilities` in `OMA_OPENAI_COMPATIBLE_PROVIDERS`.
-
-## Agent Model Shape
+Then use provider-qualified model config on an agent:
 
 ```json
 {
   "model": {
-    "provider": "deepseek",
-    "id": "deepseek-v4-pro"
+    "provider": "example",
+    "id": "example-chat"
   }
 }
 ```
@@ -40,33 +48,43 @@ The shorthand `provider/model-id` and `provider:model-id` forms are also accepte
 
 ```json
 {
-  "model": "minimax/MiniMax-M3"
+  "model": "example/example-chat"
 }
 ```
 
-## Custom Providers
+## Provider Examples
 
-Set `OMA_OPENAI_COMPATIBLE_PROVIDERS` to a JSON object:
+Providers such as DeepSeek and MiniMax should use the same generic registry instead
+of provider-specific code paths:
 
 ```json
 {
-  "moonshot": {
-    "api_key_env": "MOONSHOT_API_KEY",
-    "base_url": "https://api.moonshot.ai/v1",
-    "default_model": "kimi-k2",
+  "deepseek": {
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com/v1",
+    "default_model": "deepseek-chat",
+    "use_responses": false
+  },
+  "mini-max": {
+    "base_url": "https://api.minimax.io/v1",
+    "default_model": "MiniMax-M1",
     "capabilities": {
-      "streaming": true,
-      "tool_calls": true,
-      "multimodal_input": false
+      "multimodal_input": true,
+      "unsupported_parameters": ["previous_response_id", "prompt"]
     }
   }
 }
 ```
 
-Then use:
+When `api_key_env` is omitted, the provider name is normalized and uppercased.
+For example, `mini-max` resolves credentials from `MINI_MAX_API_KEY`.
 
-```json
-{
-  "model": "moonshot/kimi-k2"
-}
-```
+## Capability Map
+
+Provider behavior is not assumed to be identical. `app.runtime.providers`
+exposes a capability map used by the runtime.
+
+| Provider | Streaming | Tool calls | Responses API | Hosted tools | Multimodal input | Reasoning traces |
+| --- | --- | --- | --- | --- | --- | --- |
+| `openai` | yes | yes | configurable | yes when Responses is enabled | yes | yes when Responses is enabled |
+| custom | yes by default | yes by default | no by default | no by default | no by default | no by default |

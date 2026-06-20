@@ -72,13 +72,18 @@ Status legend:
 
 ## Session Resources
 
+Session creation accepts the SDK resource union for `file`, `github_repository`, and `memory_store`.
+Resource responses are strict-SDK-compatible, including file mounts, memory-store snapshots, GitHub checkout shape, and GitHub token redaction.
+Runtime `resources.add` follows the SDK shape and only adds files; `resources.update` follows the SDK shape and only rotates GitHub repository tokens.
+Production filesystem copy/mount semantics are still tracked in `TODO.md`.
+
 | Operation | Route | Status |
 | --- | --- | --- |
-| add | `POST /v1/sessions/{session_id}/resources` | partial |
-| retrieve | `GET /v1/sessions/{session_id}/resources/{resource_id}` | partial |
-| update | `POST /v1/sessions/{session_id}/resources/{resource_id}` | partial |
-| list | `GET /v1/sessions/{session_id}/resources` | partial |
-| delete | `DELETE /v1/sessions/{session_id}/resources/{resource_id}` | partial |
+| add | `POST /v1/sessions/{session_id}/resources` | implemented |
+| retrieve | `GET /v1/sessions/{session_id}/resources/{resource_id}` | implemented |
+| update | `POST /v1/sessions/{session_id}/resources/{resource_id}` | implemented |
+| list | `GET /v1/sessions/{session_id}/resources` | implemented |
+| delete | `DELETE /v1/sessions/{session_id}/resources/{resource_id}` | implemented |
 
 ## Session Threads
 
@@ -126,7 +131,7 @@ Status legend:
 | credential list | `GET /v1/vaults/{vault_id}/credentials` | partial |
 | credential delete | `DELETE /v1/vaults/{vault_id}/credentials/{credential_id}` | partial |
 | credential archive | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/archive` | partial |
-| credential OAuth validate | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate` | stub |
+| credential OAuth validate | `POST /v1/vaults/{vault_id}/credentials/{credential_id}/mcp_oauth_validate` | partial |
 
 ## Memory Stores
 
@@ -145,7 +150,7 @@ Status legend:
 | memory delete | `DELETE /v1/memory_stores/{memory_store_id}/memories/{memory_id}` | partial |
 | memory version retrieve | `GET /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}` | partial |
 | memory version list | `GET /v1/memory_stores/{memory_store_id}/memory_versions` | partial |
-| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | stub |
+| memory version redact | `POST /v1/memory_stores/{memory_store_id}/memory_versions/{memory_version_id}/redact` | partial |
 
 ## Files
 
@@ -187,4 +192,4 @@ The current SDK exposes webhook event types and unwrap helpers in beta, but this
 | retrieve | `GET /v1/user_profiles/{user_profile_id}` | partial |
 | update | `POST /v1/user_profiles/{user_profile_id}` | partial |
 | list | `GET /v1/user_profiles` | partial |
-| create enrollment URL | `POST /v1/user_profiles/{user_profile_id}/enrollment_url` | stub |
+| create enrollment URL | `POST /v1/user_profiles/{user_profile_id}/enrollment_url` | partial |

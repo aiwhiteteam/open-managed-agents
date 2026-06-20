@@ -2,19 +2,24 @@
 
 Session execution now writes a durable `environment_work` resource before execution.
 
+This queue is visible state for session execution. It does not mean local development must run a separate worker.
+
 ## Current MVP
 
 - User events enqueue a work item with `session_id`, trigger, attempt count, and queued timestamp.
-- `cloud` and `local` environments are consumed inline by the API process for local development.
+- `cloud` environments are consumed inline by the API process for the default local and hosted-provider path.
+- `local` environments are an explicit development/test escape hatch and are also consumed inline.
 - `self_hosted` environments only enqueue work. Workers use the environment work routes to lease and report progress.
 - `GET /v1/environments/{environment_id}/work/poll` leases one queued item.
 - `POST /work/{work_id}/ack` marks it running.
 - `POST /work/{work_id}/heartbeat` records progress and extends the lease.
 - `POST /work/{work_id}/stop` marks it stopped.
 
-This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with fencing locks and retry backoff.
+This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with fencing locks and retry backoff when long-running async execution is required.
 
-## Worker Command
+## Optional Self-Hosted Worker
+
+Most users should not run this in local development. Use it only for `self_hosted` environments or queue lifecycle testing:
 
 ```bash
 oma-worker --poll-interval 1

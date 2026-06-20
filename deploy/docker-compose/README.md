@@ -22,6 +22,6 @@ Run the worker too:
 docker compose -f deploy/docker-compose/compose.yaml --profile worker up --build web worker
 ```
 
-The compose file defaults to `OMA_STORAGE_BACKEND=s3`. MinIO is exposed on
-`http://localhost:9100`, and the MinIO console is exposed on
-`http://localhost:9101`.
+The compose file uses MinIO through the same `S3_*` settings as production.
+MinIO is exposed on `http://localhost:9100`, and the MinIO console is exposed
+on `http://localhost:9101`.

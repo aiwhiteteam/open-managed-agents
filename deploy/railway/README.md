@@ -22,4 +22,4 @@ railway run scripts/migrate.sh
 ```
 
 Required variables are the same as `.env.example`: `DATABASE_URL`, provider API
-keys, `OMA_API_KEYS`, and `S3_*` when `OMA_STORAGE_BACKEND=s3`.
+keys, optional `OMA_API_KEY`, and `S3_*`.

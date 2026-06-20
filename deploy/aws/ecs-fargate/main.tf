@@ -55,7 +55,7 @@ resource "aws_iam_role_policy" "read_secrets" {
         Resource = [
           var.database_url_secret_arn,
           var.openai_api_key_secret_arn,
-          var.oma_api_keys_secret_arn,
+          var.oma_api_key_secret_arn,
           var.s3_access_key_id_secret_arn,
           var.s3_secret_access_key_secret_arn
         ]
@@ -84,8 +84,7 @@ resource "aws_iam_role" "task" {
 locals {
   common_environment = [
     { name = "APP_ENV", value = "production" },
-    { name = "OMA_RUNTIME_BACKEND", value = "auto" },
-    { name = "OMA_STORAGE_BACKEND", value = "s3" },
+    { name = "OMA_RUNTIME_BACKEND", value = "openai" },
     { name = "S3_ENDPOINT_URL", value = var.s3_endpoint_url },
     { name = "S3_BUCKET_NAME", value = var.s3_bucket_name },
     { name = "S3_PUBLIC_URL", value = var.s3_public_url },
@@ -95,7 +94,7 @@ locals {
   common_secrets = [
     { name = "DATABASE_URL", valueFrom = var.database_url_secret_arn },
     { name = "OPENAI_API_KEY", valueFrom = var.openai_api_key_secret_arn },
-    { name = "OMA_API_KEYS", valueFrom = var.oma_api_keys_secret_arn },
+    { name = "OMA_API_KEY", valueFrom = var.oma_api_key_secret_arn },
     { name = "S3_ACCESS_KEY_ID", valueFrom = var.s3_access_key_id_secret_arn },
     { name = "S3_SECRET_ACCESS_KEY", valueFrom = var.s3_secret_access_key_secret_arn }
   ]
