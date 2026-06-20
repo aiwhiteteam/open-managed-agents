@@ -272,6 +272,18 @@ async def test_deployment_rejects_bad_timezone_and_paused_run(client):
         "/v1/deployments",
         headers=TEST_HEADERS,
         json={
+            "name": "System-only initial events",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "system.message", "content": "context only"}],
+        },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
             "name": "Paused deployment",
             "agent": {"id": agent["id"], "version": 1},
             "environment_id": environment["id"],

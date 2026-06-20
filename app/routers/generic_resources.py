@@ -1347,6 +1347,8 @@ def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
         event_type = str(raw_event.get("type") or "")
         if event_type not in {"system.message", "user.define_outcome", "user.message"}:
             raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
+    if not any(str(raw_event.get("type") or "") == "user.message" for raw_event in initial_events):
+        raise HTTPException(status_code=422, detail="Deployment initial_events must include a user.message event")
 
 
 def _valid_cron_expression(expression: str) -> bool:
