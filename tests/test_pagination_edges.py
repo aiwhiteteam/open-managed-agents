@@ -1,4 +1,12 @@
+import base64
+import json
+
 from tests.conftest import TEST_HEADERS
+
+
+def expired_page_cursor(offset: int = 0) -> str:
+    payload = json.dumps({"offset": offset, "expires_at": 0}, separators=(",", ":")).encode("utf-8")
+    return "page_" + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
 async def test_page_cursor_rejects_invalid_cursor(client):
@@ -6,6 +14,13 @@ async def test_page_cursor_rejects_invalid_cursor(client):
 
     assert response.status_code == 400
     assert "Invalid page cursor" in response.json()["error"]["message"]
+
+
+async def test_page_cursor_rejects_expired_cursor(client):
+    response = await client.get("/v1/agents", headers=TEST_HEADERS, params={"page": expired_page_cursor()})
+
+    assert response.status_code == 400
+    assert "Expired page cursor" in response.json()["error"]["message"]
 
 
 async def test_file_id_cursor_rejects_unknown_cursor(client):

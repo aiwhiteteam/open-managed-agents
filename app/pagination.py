@@ -1,6 +1,6 @@
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, TypeVar
 
 from fastapi import HTTPException
@@ -11,6 +11,7 @@ T = TypeVar("T")
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 1000
+PAGE_CURSOR_TTL_SECONDS = 15 * 60
 
 
 def paginate(
@@ -127,15 +128,33 @@ def _decode_page(value: str | None) -> int:
     try:
         payload = value.removeprefix("page_")
         decoded = base64.urlsafe_b64decode(payload.encode("ascii") + b"===")
-        offset = json.loads(decoded.decode("utf-8")).get("offset")
-        return max(0, int(offset))
+        cursor = json.loads(decoded.decode("utf-8"))
+        offset = int(cursor.get("offset"))
+        expires_at = _cursor_expires_at(cursor)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid page cursor") from exc
+    if expires_at is not None and expires_at <= _now_epoch_seconds():
+        raise HTTPException(status_code=400, detail="Expired page cursor")
+    return max(0, offset)
 
 
 def _encode_page(offset: int) -> str:
-    payload = json.dumps({"offset": offset}, separators=(",", ":")).encode("utf-8")
+    payload = json.dumps(
+        {"offset": offset, "expires_at": _now_epoch_seconds() + PAGE_CURSOR_TTL_SECONDS},
+        separators=(",", ":"),
+    ).encode("utf-8")
     return "page_" + base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _cursor_expires_at(cursor: dict[str, Any]) -> int | None:
+    value = cursor.get("expires_at")
+    if value is None:
+        return None
+    return int(value)
+
+
+def _now_epoch_seconds() -> int:
+    return int(datetime.now(timezone.utc).timestamp())
 
 
 def _parse_datetime(value: str | datetime | None) -> datetime | None:

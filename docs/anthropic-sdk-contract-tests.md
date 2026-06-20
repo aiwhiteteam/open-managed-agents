@@ -41,11 +41,11 @@ Current passing coverage:
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` pagination for files.
 - Representative list filters and sort options: `include_archived`, `source`, `path_prefix`, `order/order_by`, `deployment_id`, `trigger_type`, and `has_error`.
-- Invalid page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and high-limit clamping.
+- Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and high-limit clamping.
 
 Important remaining coverage gaps:
 
-- Exhaustive pagination edge cases across every route group, especially expired cursor behavior.
+- Exhaustive pagination edge cases across every route group.
 - Full filter semantics for every list endpoint, especially less common filters.
 - Production runtime semantics behind the validated response shapes.
 
