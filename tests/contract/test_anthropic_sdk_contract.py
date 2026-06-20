@@ -313,6 +313,12 @@ async def test_anthropic_sdk_session_contract():
         assert any(item.type == "github_repository" for item in resources)
         assert any(item.type == "memory_store" and item.memory_store_id == memory_store.id for item in resources)
 
+        scoped_files = [item async for item in client.beta.files.list(scope_id=session.id, limit=20, **BETA_KWARG)]
+        scoped_file = next(item for item in scoped_files if item.id == uploaded.id)
+        assert scoped_file.scope is not None
+        assert scoped_file.scope.type == "session"
+        assert scoped_file.scope.id == session.id
+
         updated_resource = await client.beta.sessions.resources.update(
             initial_resources_by_type["github_repository"].id,
             session_id=session.id,
@@ -1033,3 +1039,5 @@ async def test_anthropic_sdk_resource_specific_pagination_and_filter_contract():
         file_page_2 = await client.beta.files.list(limit=2, after_id=file_page.last_id, **BETA_KWARG)
         assert file_page_2.data
         assert file_page.data[-1].id != file_page_2.data[0].id
+        file_before_page = await client.beta.files.list(limit=2, before_id=file_page_2.data[0].id, **BETA_KWARG)
+        assert [item.id for item in file_before_page.data] == [item.id for item in file_page.data]

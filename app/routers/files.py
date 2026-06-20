@@ -217,12 +217,21 @@ async def list_files(
     limit: int = 50,
     after_id: str | None = None,
     before_id: str | None = None,
+    scope_id: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     files = await res_q.list_resources(db, resource_type="file", limit=1000)
+    scope_file_ids: set[str] = set()
+    if scope_id is not None:
+        scope_file_ids = await _file_ids_for_scope(db, scope_id)
+        files = [
+            file
+            for file in files
+            if file.id in scope_file_ids or _file_scope_id(file.data) == scope_id
+        ]
     files = sort_by_created_at(files, order="desc")
     return paginate_by_id(
-        [resource_to_response(f, public_type="file") for f in files],
+        [_file_response(f, scope_id=scope_id if f.id in scope_file_ids else None) for f in files],
         limit=limit,
         after_id=after_id,
         before_id=before_id,
@@ -285,6 +294,40 @@ def _scan_upload_content(content: bytes, *, label: str) -> None:
         validate_upload_content(content, label=label)
     except UnsafeContentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _file_response(file, *, scope_id: str | None = None) -> dict:
+    response = resource_to_response(file, public_type="file")
+    if scope_id is not None:
+        response.setdefault("scope", {"type": "session", "id": scope_id})
+    return response
+
+
+async def _file_ids_for_scope(db: AsyncSession, scope_id: str) -> set[str]:
+    resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=scope_id,
+        limit=1000,
+    )
+    file_ids: set[str] = set()
+    for resource in resources:
+        data = resource.data or {}
+        if data.get("type") != "file":
+            continue
+        file_id = data.get("file_id")
+        if isinstance(file_id, str) and file_id:
+            file_ids.add(file_id)
+    return file_ids
+
+
+def _file_scope_id(data: dict | None) -> str | None:
+    scope = (data or {}).get("scope")
+    if isinstance(scope, dict):
+        scope_id = scope.get("id")
+        return scope_id if isinstance(scope_id, str) else None
+    scope_id = (data or {}).get("scope_id")
+    return scope_id if isinstance(scope_id, str) else None
 
 
 async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):
