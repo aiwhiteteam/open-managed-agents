@@ -1413,6 +1413,23 @@ async def test_anthropic_sdk_resource_specific_pagination_and_filter_contract():
         )
         assert [item.path for item in memory_page_2.data] == ["/projects/2.md"]
 
+        await client.beta.memory_stores.memories.create(
+            store.id,
+            path="/projects/nested/notes.md",
+            content="nested content",
+            **BETA_KWARG,
+        )
+        depth_page = await client.beta.memory_stores.memories.list(
+            store.id,
+            path_prefix="/projects/",
+            depth=1,
+            order="asc",
+            order_by="path",
+            limit=20,
+            **BETA_KWARG,
+        )
+        assert any(item.type == "memory_prefix" and item.path == "/projects/nested/" for item in depth_page.data)
+
         agent = await client.beta.agents.create(name="SDK Run Filter Agent", model={"id": "gpt-5.5"}, **BETA_KWARG)
         environment = await client.beta.environments.create(
             name="SDK Run Filter Environment",

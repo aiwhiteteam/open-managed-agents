@@ -139,7 +139,7 @@ Deployment create/update validates the referenced agent, environment, and `initi
 
 ## Memory Stores
 
-Memory records enforce SDK-compatible slash-prefixed path validation, the official 100KB content limit, and the 2000 memories per store limit. Every create/update/delete produces an immutable memory version; store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
+Memory records enforce SDK-compatible slash-prefixed path validation, the official 100KB content limit, and the 2000 memories per store limit. Memory list supports `path_prefix`, `depth` rollups as `memory_prefix` items, `order`, `order_by`, and `view`. Every create/update/delete produces an immutable memory version; store-level version listing and version retrieve keep working after the memory is deleted. Memory-version list supports SDK `memory_id`, `operation`, `api_key_id`, `session_id`, `view`, and created-at filters. Redaction rejects the current live head version, and archived stores remain readable but reject writes and new session attachments.
 
 | Operation | Route | Status |
 | --- | --- | --- |

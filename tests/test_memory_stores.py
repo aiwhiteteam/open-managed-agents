@@ -159,6 +159,46 @@ async def test_memory_path_prefix_query_is_not_capped_before_filtering(client):
     assert [item["path_key"] for item in response.json()["data"]] == ["customers/acme"]
 
 
+async def test_memory_list_depth_returns_prefix_rollups(client):
+    store = await _create_store(client)
+    for path in [
+        "/projects/foo/notes.md",
+        "/projects/foo/todo.md",
+        "/projects/readme.md",
+        "/customers/acme.md",
+    ]:
+        response = await client.post(
+            f"/v1/memory_stores/{store['id']}/memories",
+            headers=TEST_HEADERS,
+            json={"path": path, "content": path},
+        )
+        assert response.status_code == 201, response.text
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        params={"path_prefix": "/projects/", "depth": 1, "order": "asc", "view": "basic"},
+    )
+    assert response.status_code == 200, response.text
+    items = response.json()["data"]
+    assert [(item["type"], item["path"]) for item in items] == [
+        ("memory_prefix", "/projects/foo/"),
+        ("memory", "/projects/readme.md"),
+    ]
+    assert items[1]["content"] is None
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        params={"path_prefix": "/", "depth": 1, "order": "asc"},
+    )
+    assert response.status_code == 200, response.text
+    assert [(item["type"], item["path"]) for item in response.json()["data"]] == [
+        ("memory_prefix", "/customers/"),
+        ("memory_prefix", "/projects/"),
+    ]
+
+
 async def test_memory_version_redaction_removes_snapshot_content(client):
     store = await _create_store(client)
     response = await client.post(

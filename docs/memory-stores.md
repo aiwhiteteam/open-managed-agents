@@ -11,6 +11,7 @@ Object storage is not the source of truth for memory records. S3-compatible stor
 - `memory_version` rows store version snapshots with actor and operation metadata.
 - Paths are unique inside a memory store.
 - String paths follow the Anthropic SDK contract: they must start with `/`, be at most 1024 bytes, contain no empty, `.`, or `..` segments, contain no control/format characters, and already be NFC-normalized.
+- Listing with `depth` returns list-time `memory_prefix` rollups for directories deeper than the requested depth. Prefixes are not stored resources and have no lifecycle.
 - Individual memory content is capped at 100KB, and each store is capped at 2000 live memories.
 - Updates may pass `if_version` or `expected_version`; stale values return `409`.
 - Every create, update, and delete creates an immutable memory version; versions survive after their memory is deleted.

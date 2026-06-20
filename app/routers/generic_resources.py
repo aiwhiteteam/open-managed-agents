@@ -237,6 +237,7 @@ async def list_memories(
     page: str | None = None,
     path: str | None = None,
     path_prefix: str | None = None,
+    depth: int | None = None,
     view: str | None = None,
     order: str = "asc",
     order_by: str = "path",
@@ -249,23 +250,33 @@ async def list_memories(
         resources = [memory] if memory is not None else []
     elif path_prefix is not None:
         prefix = _path_key(_normalize_memory_path_prefix(path_prefix))
-        resources = await res_q.list_resources_by_name_prefix(
-            db,
-            resource_type="memory",
-            parent_id=memory_store_id,
-            name_prefix=prefix,
-            limit=1000,
-        )
+        if prefix:
+            resources = await res_q.list_resources_by_name_prefix(
+                db,
+                resource_type="memory",
+                parent_id=memory_store_id,
+                name_prefix=prefix,
+                limit=1000,
+            )
+        else:
+            resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
     else:
         resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
     if path is not None and path_prefix is not None:
         prefix = _path_key(_normalize_memory_path_prefix(path_prefix))
-        resources = [
-            memory
-            for memory in resources
-            if memory.name == prefix or str(memory.name or "").startswith(f"{prefix}/")
-        ]
+        if prefix:
+            resources = [
+                memory
+                for memory in resources
+                if memory.name == prefix or str(memory.name or "").startswith(f"{prefix}/")
+            ]
     resources = _sort_memories(resources, order=order, order_by=order_by)
+    if depth is not None and path is None:
+        return paginate(
+            _memory_list_items_with_depth(resources, view=view, depth=depth, path_prefix=path_prefix, order=order),
+            limit=limit,
+            page=page,
+        )
     return paginate([_resource_response(memory, view=view) for memory in resources], limit=limit, page=page)
 
 
@@ -1250,6 +1261,8 @@ def _normalize_memory_path(value: Any) -> str:
 
 def _normalize_memory_path_prefix(value: str) -> str:
     text = str(value or "").strip()
+    if text == "/":
+        return "/"
     if text != "/" and text.endswith("/"):
         text = text.rstrip("/")
     return _normalize_memory_path(text)
@@ -1369,6 +1382,55 @@ def _sort_memories(resources: list, *, order: str, order_by: str) -> list:
     if order_by == "created_at":
         return sort_by_created_at(resources, order=order)
     return sorted(resources, key=lambda resource: str(resource.data.get("path_key") or ""), reverse=reverse)
+
+
+def _memory_list_items_with_depth(
+    resources: list,
+    *,
+    view: str | None,
+    depth: int,
+    path_prefix: str | None,
+    order: str,
+) -> list[dict[str, Any]]:
+    if depth < 0:
+        raise HTTPException(status_code=422, detail="Memory list depth must be non-negative")
+
+    prefix_key = _path_key(_normalize_memory_path_prefix(path_prefix)) if path_prefix is not None else ""
+    base_parts = prefix_key.split("/") if prefix_key else []
+    items_by_path: dict[str, dict[str, Any]] = {}
+
+    for resource in resources:
+        path_key = _memory_resource_path_key(resource)
+        if not path_key:
+            continue
+        parts = path_key.split("/")
+        if prefix_key:
+            if path_key == prefix_key:
+                relative_parts: list[str] = []
+            elif path_key.startswith(f"{prefix_key}/"):
+                relative_parts = parts[len(base_parts) :]
+            else:
+                continue
+        else:
+            relative_parts = parts
+
+        if len(relative_parts) <= depth:
+            memory = _resource_response(resource, view=view)
+            items_by_path[memory["path"]] = memory
+            continue
+
+        rollup_parts = parts[: len(base_parts) + depth]
+        prefix_path = "/" if not rollup_parts else f"/{'/'.join(rollup_parts)}/"
+        items_by_path.setdefault(prefix_path, {"type": "memory_prefix", "path": prefix_path})
+
+    reverse = order == "desc"
+    return [items_by_path[path] for path in sorted(items_by_path, reverse=reverse)]
+
+
+def _memory_resource_path_key(resource) -> str:
+    data = resource.data or {}
+    value = data.get("path_key") or resource.name or ""
+    return str(value).strip("/")
 
 
 def _api_actor(api_key_id: str) -> dict[str, str]:
