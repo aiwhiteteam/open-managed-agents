@@ -104,8 +104,12 @@ async def list_sessions(
     page: str | None = None,
     include_archived: bool = False,
     order: str = "desc",
+    agent_id: str | None = None,
+    agent_version: int | None = None,
     memory_store_id: str | None = None,
     deployment_id: str | None = None,
+    statuses: list[str] | None = Query(default=None),
+    statuses_brackets: list[str] | None = Query(default=None, alias="statuses[]"),
     created_at_gt: datetime | None = Query(default=None, alias="created_at[gt]"),
     created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
     created_at_lt: datetime | None = Query(default=None, alias="created_at[lt]"),
@@ -120,6 +124,14 @@ async def list_sessions(
         created_at_lt=created_at_lt,
         created_at_lte=created_at_lte,
     )
+    requested_statuses = [*(statuses or []), *(statuses_brackets or [])]
+    if requested_statuses:
+        allowed_statuses = set(requested_statuses)
+        sessions = [session for session in sessions if session.status in allowed_statuses]
+    if agent_id is not None:
+        sessions = [session for session in sessions if session.agent_id == agent_id]
+        if agent_version is not None:
+            sessions = [session for session in sessions if session.agent_version == agent_version]
     if memory_store_id is not None:
         filtered_sessions = []
         for session in sessions:

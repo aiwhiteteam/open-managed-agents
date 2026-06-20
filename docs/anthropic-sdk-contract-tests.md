@@ -43,7 +43,7 @@ Current passing coverage:
 - `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`.
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` and `before_id` pagination for files.
-- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, `path_prefix`, `order/order_by`, `deployment_id`, `trigger_type`, and `has_error`.
+- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, `agent_id`, `agent_version`, `statuses`, `path_prefix`, `order/order_by`, `deployment_id`, `trigger_type`, and `has_error`.
 - Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and high-limit clamping.
 
 Important remaining coverage gaps:

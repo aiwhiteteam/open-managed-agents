@@ -902,6 +902,20 @@ async def test_anthropic_sdk_page_cursor_pagination_and_filters_contract():
         assert {session.id for session in created_sessions}.issubset(
             {item.id async for item in client.beta.sessions.list(limit=20, include_archived=True, **BETA_KWARG)}
         )
+        filtered_sessions = [
+            item
+            async for item in client.beta.sessions.list(
+                agent_id=agents[1].id,
+                agent_version=agents[1].version,
+                statuses=["idle"],
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert {session.id for session in created_sessions}.issubset({item.id for item in filtered_sessions})
+        assert all(item.agent_id == agents[1].id for item in filtered_sessions)
+        assert all(item.agent_version == agents[1].version for item in filtered_sessions)
+        assert all(item.status == "idle" for item in filtered_sessions)
 
         user_profiles = []
         for index in range(3):
