@@ -37,6 +37,8 @@ RESOURCE_CONFIG = {
 MAX_MEMORIES_PER_STORE = 2000
 MAX_MEMORY_CONTENT_BYTES = 100 * 1024
 MAX_MEMORY_PATH_BYTES = 1024
+DEPLOYMENT_RUN_TRIGGER_TYPES = {"manual", "schedule"}
+MEMORY_VIEWS = {"basic", "full"}
 
 
 @router.post("/v1/vaults", status_code=201)
@@ -212,6 +214,7 @@ async def create_memory(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     await _must_write_memory_store(db, memory_store_id)
     await _ensure_memory_store_capacity(db, memory_store_id)
     data = _memory_payload(body.model_dump(mode="json"))
@@ -245,6 +248,7 @@ async def list_memories(
     order_by: str = "path",
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     await _must_exist(db, memory_store_id, "memory_store")
     if path is not None:
         path_key = _path_key(_normalize_memory_path(path))
@@ -289,6 +293,7 @@ async def retrieve_memory_by_path(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     await _must_exist(db, memory_store_id, "memory_store")
     memory = await _find_memory_by_path(db, memory_store_id, _path_key(_normalize_memory_path(path)))
     if memory is None:
@@ -303,6 +308,7 @@ async def retrieve_memory(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
     return _resource_response(memory, view=view)
 
@@ -315,6 +321,7 @@ async def update_memory(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
     update = body.model_dump(mode="json")
     expected_version = update.pop("if_version", update.pop("expected_version", None))
@@ -415,6 +422,7 @@ async def list_memory_versions(
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     await _must_exist(db, memory_store_id, "memory_store")
     memories = await res_q.list_resources(
         db,
@@ -448,6 +456,7 @@ async def retrieve_memory_version(
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    view = _normalize_memory_view(view)
     await _must_exist(db, memory_store_id, "memory_store")
     version = await res_q.get_resource(db, resource_id=memory_version_id, resource_type="memory_version")
     if version is None:
@@ -693,6 +702,8 @@ async def list_deployment_runs(
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
+    if trigger_type is not None and trigger_type not in DEPLOYMENT_RUN_TRIGGER_TYPES:
+        raise HTTPException(status_code=422, detail="trigger_type must be manual or schedule")
     return await _list_top_level(
         db,
         "deployment_run",
@@ -1342,6 +1353,7 @@ def _content_metadata(content: str) -> dict[str, Any]:
 
 
 def _memory_response(resource, *, view: str | None = None) -> dict[str, Any]:
+    view = _normalize_memory_view(view)
     response = resource_to_response(resource, public_type="memory")
     content = response.get("content")
     if content is None and not response.get("redacted"):
@@ -1360,6 +1372,7 @@ def _memory_response(resource, *, view: str | None = None) -> dict[str, Any]:
 
 
 def _memory_version_response(resource, *, view: str | None = None) -> dict[str, Any]:
+    view = _normalize_memory_view(view)
     response = resource_to_response(resource, public_type="memory_version")
     data = resource.data or {}
     snapshot = dict(data.get("snapshot") or {})
@@ -1382,6 +1395,15 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
         response["content_sha256"] = data.get("content_sha256") or snapshot.get("content_sha256")
         response["content_size_bytes"] = data.get("content_size_bytes") or snapshot.get("content_size_bytes")
     return response
+
+
+def _normalize_memory_view(view: str | None) -> str | None:
+    if view is None:
+        return None
+    normalized = view.lower()
+    if normalized not in MEMORY_VIEWS:
+        raise HTTPException(status_code=422, detail="view must be basic or full")
+    return normalized
 
 
 def _memory_version_api_key_id(resource) -> str | None:

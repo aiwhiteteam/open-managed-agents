@@ -47,6 +47,8 @@ from app.session_state import (
     ACTIVE_STATUSES,
     ACTION_RESULT_EVENTS,
     SESSION_IDLE,
+    SESSION_RESCHEDULING,
+    SESSION_RUNNING,
     SESSION_TERMINATED,
     blocks_mutation,
     can_start_work,
@@ -55,6 +57,8 @@ from app.session_state import (
     pending_action_ids,
     starts_work,
 )
+
+SESSION_LIST_STATUSES = {SESSION_IDLE, SESSION_RUNNING, SESSION_RESCHEDULING, SESSION_TERMINATED}
 
 router = APIRouter(
     prefix="/v1/sessions",
@@ -133,6 +137,9 @@ async def list_sessions(
     )
     requested_statuses = [*(statuses or []), *(statuses_brackets or [])]
     if requested_statuses:
+        invalid_statuses = sorted(set(requested_statuses) - SESSION_LIST_STATUSES)
+        if invalid_statuses:
+            raise HTTPException(status_code=422, detail="statuses must be idle, rescheduling, running, or terminated")
         allowed_statuses = set(requested_statuses)
         sessions = [session for session in sessions if session.status in allowed_statuses]
     if agent_id is not None:

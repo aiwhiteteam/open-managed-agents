@@ -79,6 +79,34 @@ async def test_memory_list_rejects_unknown_order_params(client):
     assert "order_by must be path or created_at" in response.json()["error"]["message"]
 
 
+async def test_list_filters_reject_unknown_enum_values(client):
+    response = await client.get("/v1/sessions", headers=TEST_HEADERS, params={"statuses": "sleeping"})
+    assert response.status_code == 422
+    assert "statuses must be idle" in response.json()["error"]["message"]
+
+    response = await client.get("/v1/deployment_runs", headers=TEST_HEADERS, params={"trigger_type": "webhook"})
+    assert response.status_code == 422
+    assert "trigger_type must be manual or schedule" in response.json()["error"]["message"]
+
+
+async def test_memory_list_rejects_unknown_view(client):
+    response = await client.post(
+        "/v1/memory_stores",
+        headers=TEST_HEADERS,
+        json={"name": "View Validation Store"},
+    )
+    assert response.status_code == 201, response.text
+    store = response.json()
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        params={"view": "summary"},
+    )
+    assert response.status_code == 422
+    assert "view must be basic or full" in response.json()["error"]["message"]
+
+
 async def test_created_at_filters_accept_sdk_aliases(client):
     for index in range(2):
         response = await client.post(
