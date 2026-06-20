@@ -565,6 +565,34 @@ async def test_primary_session_thread_archive_is_persisted(client):
     assert response.json()["data"][0]["archived_at"] == archived_at
 
 
+async def test_primary_thread_events_include_unassigned_session_events(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    primary_thread = response.json()["data"][0]
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "hello primary"}]},
+    )
+    assert response.status_code == 200, response.text
+    await _wait_for_event_type(client, session["id"], "agent.message")
+
+    response = await client.get(
+        f"/v1/sessions/{session['id']}/threads/{primary_thread['id']}/events",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    types = [event["type"] for event in response.json()["data"]]
+    assert "user.message" in types
+    assert "agent.message" in types
+    assert "session.status_running" in types
+
+
 async def test_multiagent_session_creates_delegated_agent_threads(client):
     reviewer = await _create_agent(client)
     response = await client.post(
@@ -610,3 +638,49 @@ async def test_multiagent_session_creates_delegated_agent_threads(client):
     )
     assert response.status_code == 200, response.text
     assert response.json()["archived_at"] is not None
+
+
+async def test_delegated_thread_events_only_include_explicit_thread_events(client):
+    reviewer = await _create_agent(client)
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {
+                "type": "coordinator",
+                "agents": [{"type": "self"}, {"type": "agent", "id": reviewer["id"]}],
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    coordinator = response.json()
+    environment = await _create_environment(client)
+    session = await _create_session(client, coordinator, environment)
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    primary, delegated = response.json()["data"]
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "hello coordinator"}]},
+    )
+    assert response.status_code == 200, response.text
+    await _wait_for_event_type(client, session["id"], "agent.message")
+
+    response = await client.get(
+        f"/v1/sessions/{session['id']}/threads/{delegated['id']}/events",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+    response = await client.get(
+        f"/v1/sessions/{session['id']}/threads/{primary['id']}/events",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert any(event["type"] == "user.message" for event in response.json()["data"])

@@ -337,7 +337,8 @@ async def test_anthropic_sdk_session_contract():
                 **BETA_KWARG,
             )
         ]
-        assert thread_events == []
+        assert any(item.type == "session.status_idle" for item in thread_events)
+        assert any(item.type == "system.message" for item in thread_events)
 
         archived_thread = await client.beta.sessions.threads.archive(
             primary_thread.id,

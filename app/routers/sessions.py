@@ -543,12 +543,14 @@ async def list_session_thread_events(
     page: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
-    await _must_get_session(db, session_id)
+    session = await _must_get_session(db, session_id)
+    await _must_get_session_thread(db, session, thread_id)
+    primary_thread_id = _primary_thread_id(session)
     events = await events_q.list_events(db, session_id=session_id, after_seq=after_seq, limit=1000)
     filtered = [
         event_to_response(event)
         for event in events
-        if event.payload.get("thread_id") == thread_id or event.payload.get("thread", {}).get("id") == thread_id
+        if _event_belongs_to_thread(event, thread_id, primary_thread_id)
     ]
     return paginate(filtered, limit=limit, page=page)
 
@@ -559,7 +561,10 @@ async def stream_session_thread_events(
     thread_id: str,
     request: Request,
     after_seq: int = 0,
+    db: AsyncSession = Depends(get_session),
 ):
+    session = await _must_get_session(db, session_id)
+    await _must_get_session_thread(db, session, thread_id)
     return await _stream_response(session_id, request, after_seq, thread_id=thread_id)
 
 
@@ -1077,6 +1082,21 @@ async def _session_thread_response(db: AsyncSession, session, thread, *, archive
     }
 
 
+async def _must_get_session_thread(db: AsyncSession, session, thread_id: str):
+    if thread_id == _primary_thread_id(session):
+        return None
+    thread = await res_q.get_resource(
+        db,
+        resource_id=thread_id,
+        resource_type="session_thread",
+        parent_id=session.id,
+        workspace_id=session.workspace_id,
+    )
+    if thread is None:
+        raise HTTPException(status_code=404, detail="Session thread not found")
+    return thread
+
+
 async def _create_multiagent_session_threads(db: AsyncSession, session, version) -> None:
     multiagent = version.multiagent or {}
     if not isinstance(multiagent, dict):
@@ -1139,6 +1159,24 @@ def _primary_thread_id(session) -> str:
     return f"thrd_{session.id}_primary"
 
 
+def _event_belongs_to_thread(event, thread_id: str, primary_thread_id: str) -> bool:
+    event_thread_id = _event_thread_id(event)
+    if thread_id == primary_thread_id:
+        return event_thread_id in {None, "", primary_thread_id}
+    return event_thread_id == thread_id
+
+
+def _event_thread_id(event) -> str | None:
+    payload = event.payload or {}
+    value = payload.get("thread_id")
+    if value:
+        return str(value)
+    thread = payload.get("thread")
+    if isinstance(thread, dict) and thread.get("id"):
+        return str(thread["id"])
+    return None
+
+
 def _resolve_agent_ref(agent: str | AgentReference) -> tuple[str, int | None]:
     if isinstance(agent, str):
         return agent, None
@@ -1177,9 +1215,10 @@ async def _stream_response(
                 )
             if events:
                 for event in events:
-                    if thread_id is not None and not (
-                        event.payload.get("thread_id") == thread_id
-                        or event.payload.get("thread", {}).get("id") == thread_id
+                    if thread_id is not None and not _event_belongs_to_thread(
+                        event,
+                        thread_id,
+                        _primary_thread_id(session),
                     ):
                         continue
                     current_seq = event.seq
