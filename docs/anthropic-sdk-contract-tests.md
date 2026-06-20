@@ -24,7 +24,7 @@ Current passing coverage:
 - `client.beta.sessions.create/retrieve/update/list/archive/delete`, including `deployment_id` filtering.
 - `client.beta.sessions.create` resource union for `file`, `github_repository`, and `memory_store`, including GitHub token redaction.
 - `client.beta.sessions.update` metadata/title patches and session-local agent `tools`/`mcp_servers` replacement.
-- `client.beta.sessions.events.send/list`, including SDK `types[]` filtering.
+- `client.beta.sessions.events.send/list`, including `user.tool_result` and SDK `types[]` filtering.
 - SDK SSE decoder and Managed Agents stream-event union parsing for session event payloads.
 - `client.beta.sessions.resources.add/retrieve/update/list/delete`.
 - `client.beta.sessions.threads.list/retrieve/archive`.

@@ -849,7 +849,7 @@ def _latest_user_action_event(history):
     for event in reversed(history):
         if not event.type.startswith("user."):
             continue
-        return event if event.type in {"user.custom_tool_result", "user.tool_confirmation"} else None
+        return event if event.type in {"user.custom_tool_result", "user.tool_confirmation", "user.tool_result"} else None
     return None
 
 
@@ -857,6 +857,10 @@ def _local_action_result_text(event) -> str:
     if event.type == "user.custom_tool_result":
         result = _text_from_payload(event.payload) or "custom tool result received"
         return f"Open Managed Agents local runtime received custom tool result: {result}"
+
+    if event.type == "user.tool_result":
+        result = _text_from_payload(event.payload) or "tool result received"
+        return f"Open Managed Agents local runtime received tool result: {result}"
 
     result = event.payload.get("result")
     if result == "deny":

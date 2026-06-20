@@ -642,6 +642,11 @@ def _validate_action_result_matches_blocker(result_type: str, payload: dict[str,
             raise HTTPException(status_code=409, detail="custom_tool_result must target agent.custom_tool_use")
         return
 
+    if result_type == "user.tool_result":
+        if blocker_type != "agent.tool_use":
+            raise HTTPException(status_code=409, detail="tool_result must target agent.tool_use")
+        return
+
     if result_type == "user.tool_confirmation":
         if blocker_type not in {"agent.tool_use", "agent.mcp_tool_use"}:
             raise HTTPException(status_code=409, detail="tool_confirmation must target agent tool use")
@@ -670,7 +675,7 @@ def _resolved_action_ids(events) -> set[str]:
 def _action_result_target(event_type: str, payload: dict[str, Any]) -> str | None:
     if event_type == "user.custom_tool_result":
         value = payload.get("custom_tool_use_id")
-    elif event_type == "user.tool_confirmation":
+    elif event_type in {"user.tool_confirmation", "user.tool_result"}:
         value = payload.get("tool_use_id")
     else:
         return None

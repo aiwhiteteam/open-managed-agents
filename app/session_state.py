@@ -12,7 +12,7 @@ ACTIVE_STATUSES = {SESSION_RUNNING, SESSION_RESCHEDULING}
 RUNNABLE_STATUSES = {SESSION_IDLE, SESSION_RESCHEDULING}
 
 USER_EVENTS_THAT_START_WORK = {"user.message", "user.define_outcome"}
-ACTION_RESULT_EVENTS = {"user.custom_tool_result", "user.tool_confirmation"}
+ACTION_RESULT_EVENTS = {"user.custom_tool_result", "user.tool_confirmation", "user.tool_result"}
 
 
 def stop_reason_type(stop_reason: dict[str, Any] | None) -> str | None:
@@ -49,4 +49,3 @@ def starts_work(event_type: str) -> bool:
 
 def is_action_result(event_type: str) -> bool:
     return event_type in ACTION_RESULT_EVENTS
-

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import hashlib
 import json
 
@@ -573,6 +574,68 @@ async def test_anthropic_sdk_session_event_stream_parser_contract():
 
         assert parsed_event.type == "session.status_idle"
         assert parsed_event.session_id == session.id
+
+
+async def test_anthropic_sdk_user_tool_result_event_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(
+            name="SDK Tool Result Agent",
+            model={"id": "gpt-5.5"},
+            tools=[
+                {
+                    "type": "agent_toolset_20260401",
+                    "configs": [],
+                    "default_config": {
+                        "enabled": True,
+                        "permission_policy": {"type": "always_ask"},
+                    },
+                }
+            ],
+            **BETA_KWARG,
+        )
+        environment = await client.beta.environments.create(
+            name="SDK Tool Result Environment",
+            config={"type": "cloud"},
+            **BETA_KWARG,
+        )
+        session = await client.beta.sessions.create(
+            agent={"type": "agent", "id": agent.id, "version": agent.version},
+            environment_id=environment.id,
+            **BETA_KWARG,
+        )
+
+        await client.beta.sessions.events.send(
+            session.id,
+            events=[{"type": "user.message", "content": [{"type": "text", "text": "Run a tool."}]}],
+            **BETA_KWARG,
+        )
+
+        stop_reason = None
+        for _ in range(30):
+            current = await client.beta.sessions.retrieve(session.id, **BETA_KWARG)
+            if hasattr(current.stop_reason, "model_dump"):
+                payload = current.stop_reason.model_dump(mode="json")
+            else:
+                payload = current.stop_reason
+            if payload and payload.get("type") == "requires_action":
+                stop_reason = payload
+                break
+            await asyncio.sleep(0.05)
+        assert stop_reason is not None
+        tool_use_id = stop_reason["event_ids"][0]
+
+        sent = await client.beta.sessions.events.send(
+            session.id,
+            events=[
+                {
+                    "type": "user.tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": [{"type": "text", "text": "Tool result from SDK."}],
+                }
+            ],
+            **BETA_KWARG,
+        )
+        assert sent.data[0].type == "user.tool_result"
 
 
 async def test_anthropic_sdk_skills_contract():
