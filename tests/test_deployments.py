@@ -94,6 +94,7 @@ async def test_deployment_run_validates_session_vault_ids(client):
             "name": "Vaulted deployment",
             "agent": {"id": agent["id"], "version": 1},
             "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "vaulted run"}],
             "vault_ids": [vault["id"], vault["id"]],
         },
     )
@@ -114,6 +115,7 @@ async def test_deployment_run_validates_session_vault_ids(client):
             "name": "Missing vault deployment",
             "agent": {"id": agent["id"], "version": 1},
             "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "missing vault"}],
             "vault_ids": ["vault_missing"],
         },
     )
@@ -151,6 +153,7 @@ async def test_deployment_run_mounts_deployment_resources(client):
             "name": "Resource deployment",
             "agent": {"id": agent["id"], "version": 1},
             "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "resource run"}],
             "resources": [
                 {
                     "type": "file",
@@ -200,6 +203,9 @@ async def test_deployment_run_mounts_deployment_resources(client):
 
 
 async def test_deployment_rejects_bad_timezone_and_paused_run(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
     response = await client.post(
         "/v1/deployments",
         headers=TEST_HEADERS,
@@ -220,7 +226,24 @@ async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     response = await client.post(
         "/v1/deployments",
         headers=TEST_HEADERS,
-        json={"name": "Paused deployment", "status": "paused"},
+        json={
+            "name": "Missing initial events",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Paused deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "paused"}],
+            "status": "paused",
+        },
     )
     assert response.status_code == 201, response.text
     deployment = response.json()

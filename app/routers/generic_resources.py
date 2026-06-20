@@ -437,6 +437,7 @@ async def redact_memory_version(
 @router.post("/v1/deployments", status_code=201)
 async def create_deployment(body: GenericBody, db: AsyncSession = Depends(get_session)):
     data = _normalize_deployment_data(body.model_dump(mode="json"))
+    await _validate_deployment_definition(db, data)
     return await _create_top_level(db, "deployment", data, status=data["status"])
 
 
@@ -473,6 +474,7 @@ async def retrieve_deployment(deployment_id: str, db: AsyncSession = Depends(get
 async def update_deployment(deployment_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
     deployment = await _must_exist(db, deployment_id, "deployment")
     data = _normalize_deployment_data(_merge_data(deployment.data, body.model_dump(mode="json")))
+    await _validate_deployment_definition(db, data)
     await res_q.update_resource(
         db,
         deployment,
@@ -1255,6 +1257,47 @@ def _normalize_deployment_data(data: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+async def _validate_deployment_definition(db: AsyncSession, data: dict[str, Any]) -> None:
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Deployment name is required")
+
+    agent_ref = _deployment_agent_response(data.get("agent"))
+    agent_id = str(agent_ref.get("id") or "")
+    if not agent_id:
+        raise HTTPException(status_code=422, detail="Deployment agent is required")
+    agent = await agents_q.get_agent(db, agent_id)
+    if agent is None or agent.archived_at is not None:
+        raise HTTPException(status_code=422, detail="Deployment agent not found")
+    agent_version = await agents_q.get_agent_version(db, agent_id=agent.id, version=int(agent_ref.get("version") or 1))
+    if agent_version is None:
+        raise HTTPException(status_code=422, detail="Deployment agent version not found")
+
+    environment_id = str(data.get("environment_id") or "")
+    if not environment_id:
+        raise HTTPException(status_code=422, detail="Deployment environment_id is required")
+    environment = await env_q.get_environment(db, environment_id)
+    if environment is None or environment.deleted_at is not None or environment.archived_at is not None:
+        raise HTTPException(status_code=422, detail="Deployment environment not found")
+
+    _validate_deployment_initial_events(data.get("initial_events") or [])
+
+
+def _validate_deployment_initial_events(initial_events: list[Any]) -> None:
+    if not isinstance(initial_events, list):
+        raise HTTPException(status_code=422, detail="Deployment initial_events must be an array")
+    if not initial_events:
+        raise HTTPException(status_code=422, detail="Deployment initial_events must contain at least one event")
+    if len(initial_events) > 50:
+        raise HTTPException(status_code=422, detail="Deployment initial_events supports at most 50 events")
+    for raw_event in initial_events:
+        if not isinstance(raw_event, dict):
+            raise HTTPException(status_code=422, detail="Deployment initial_events entries must be objects")
+        event_type = str(raw_event.get("type") or "")
+        if event_type not in {"system.message", "user.define_outcome", "user.message"}:
+            raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
+
+
 def _valid_cron_expression(expression: str) -> bool:
     parts = expression.split()
     if len(parts) != 5 or not all(parts):
@@ -1528,6 +1571,7 @@ def _deployment_agent_ref(value: Any) -> tuple[str, int | None]:
 
 
 async def _append_deployment_session_events(db: AsyncSession, session, initial_events: list[Any]) -> None:
+    _validate_deployment_initial_events(initial_events)
     await events_q.append_event(
         db,
         session,
@@ -1535,11 +1579,7 @@ async def _append_deployment_session_events(db: AsyncSession, session, initial_e
         payload={"type": "session.status_idle", "status": "idle", "stop_reason": {"type": "end_turn"}},
     )
     for raw_event in initial_events:
-        if not isinstance(raw_event, dict):
-            raise HTTPException(status_code=422, detail="Deployment initial_events entries must be objects")
         event_type = str(raw_event.get("type") or "")
-        if event_type not in {"system.message", "user.define_outcome", "user.message"}:
-            raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
         payload = dict(raw_event)
         payload["type"] = event_type
         await events_q.append_event(db, session, event_type=event_type, payload=payload)

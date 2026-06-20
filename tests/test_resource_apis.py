@@ -284,7 +284,12 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         "/v1/deployments",
         headers=TEST_HEADERS,
-        json={"name": "Daily report"},
+        json={
+            "name": "Daily report",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "Run report."}],
+        },
     )
     assert response.status_code == 201, response.text
     deployment = response.json()
