@@ -53,7 +53,7 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | MCP server/toolset declaration | Agent `mcp_servers` and `mcp_toolset` entries must match. Secrets stay out of agent definitions and are supplied through session vaults. | Validation plus runtime credential URL matching implemented; real MCP connection/OAuth refresh still partial |
 | Tools | Built-in toolset, MCP toolset, and custom tools are stored in agent versions. | Stored; runtime semantics partial |
 | Permission policies | Server-executed tools may require confirmation through `requires_action`; custom tools use application continuation through `user.custom_tool_result`. | MVP event contract implemented; full runtime enforcement still partial |
-| Skills | Skills are separate filesystem-based resources referenced by agents; custom skill versions are pinned or `latest`. | Partial |
+| Skills | Skills are separate filesystem-based resources referenced by agents; custom skill versions are pinned or `latest`. | Partial; agent refs are validated, runtime skill execution still TODO |
 | Environments | Environment config is not versioned; each session gets its own sandbox instance. Network and package policies are environment config. | Partial |
 | Cloud sandbox | Requires a production remote sandbox provider with network/package policy enforcement and filesystem state. | TODO |
 | Self-hosted sandbox | `self_hosted` environment acts as a work queue claimed by external workers. | Partial |

@@ -7,6 +7,7 @@ from app.agent_contract import validate_mcp_bindings
 from app.auth import require_api_access
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
+from app.db.queries import resources as res_q
 from app.models.agents import (
     AgentCreateRequest,
     AgentResponse,
@@ -31,6 +32,7 @@ async def create_agent(
 ):
     validate_mcp_bindings(body.mcp_servers, body.tools)
     multiagent = await _normalize_multiagent_roster(db, body.multiagent)
+    skills = await _normalize_skill_refs(db, body.skills)
     agent, version = await agents_q.create_agent(
         db,
         name=body.name,
@@ -39,7 +41,7 @@ async def create_agent(
         description=body.description,
         tools=body.tools,
         mcp_servers=body.mcp_servers,
-        skills=body.skills,
+        skills=skills,
         multiagent=multiagent,
         metadata=body.metadata,
         runtime=body.runtime,
@@ -123,6 +125,8 @@ async def update_agent(
     update.pop("version", None)
     if "multiagent" in update:
         update["multiagent"] = await _normalize_multiagent_roster(db, update["multiagent"])
+    if "skills" in update:
+        update["skills"] = await _normalize_skill_refs(db, update["skills"] or [])
     next_config = _merge_agent_update(active, agent, update)
     validate_mcp_bindings(next_config["mcp_servers"], next_config["tools"])
     version, _created = await agents_q.update_agent(
@@ -212,6 +216,54 @@ async def _normalize_multiagent_roster(db: AsyncSession, multiagent: dict | None
         raise HTTPException(status_code=422, detail="multiagent.agents supports at most 20 unique agents")
 
     normalized["agents"] = normalized_agents
+    return normalized
+
+
+async def _normalize_skill_refs(db: AsyncSession, skills: list[dict]) -> list[dict]:
+    if not isinstance(skills, list):
+        raise HTTPException(status_code=422, detail="skills must be an array")
+    normalized: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in skills:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=422, detail="skills entries must be objects")
+        skill_id = entry.get("id") or entry.get("skill_id")
+        if not isinstance(skill_id, str) or not skill_id:
+            raise HTTPException(status_code=422, detail="skills entries require id")
+        skill = await res_q.get_resource(db, resource_id=skill_id, resource_type="skill")
+        if skill is None:
+            raise HTTPException(status_code=422, detail=f"Skill not found: {skill_id}")
+
+        requested_version = entry.get("version", "latest")
+        if requested_version in (None, "", "latest"):
+            version = "latest"
+            if not (skill.data or {}).get("latest_version"):
+                raise HTTPException(status_code=422, detail=f"Skill has no latest version: {skill_id}")
+        else:
+            version = str(requested_version)
+            try:
+                version_int = int(version)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="skill version must be an integer or latest") from exc
+            skill_version = await res_q.get_resource_version(
+                db,
+                resource_type="skill_version",
+                parent_id=skill_id,
+                version=version_int,
+            )
+            if skill_version is None:
+                raise HTTPException(status_code=422, detail=f"Skill version not found: {skill_id}@{version}")
+
+        key = (skill_id, version)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_entry = dict(entry)
+        normalized_entry["type"] = str(normalized_entry.get("type") or "skill")
+        normalized_entry["id"] = skill_id
+        normalized_entry.pop("skill_id", None)
+        normalized_entry["version"] = version
+        normalized.append(normalized_entry)
     return normalized
 
 
