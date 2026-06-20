@@ -326,7 +326,12 @@ def _new_skill_version_id(previous: Any = None) -> int:
 
 
 def _normalize_zip_path(filename: str) -> str:
-    parts = [part for part in filename.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+    raw = filename.replace("\\", "/")
+    if raw.startswith("/"):
+        raise HTTPException(status_code=422, detail="Skill file paths must be relative")
+    parts = raw.split("/")
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(status_code=422, detail="Skill file paths must not contain empty, . or .. segments")
     return "/".join(parts) or "file"
 
 

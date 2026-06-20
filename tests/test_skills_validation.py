@@ -37,6 +37,26 @@ async def test_skill_upload_rejects_mixed_top_level_directories(client):
     assert "top-level" in response.json()["error"]["message"]
 
 
+async def test_skill_upload_rejects_unsafe_archive_paths(client):
+    response = await client.post(
+        "/v1/skills",
+        headers=TEST_HEADERS,
+        files={"files": ("../skill/SKILL.md", b"---\nname: x\ndescription: x.\n---\nBody.", "text/markdown")},
+    )
+
+    assert response.status_code == 422
+    assert "file paths" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/skills",
+        headers=TEST_HEADERS,
+        files={"files": ("/skill/SKILL.md", b"---\nname: x\ndescription: x.\n---\nBody.", "text/markdown")},
+    )
+
+    assert response.status_code == 422
+    assert "relative" in response.json()["error"]["message"]
+
+
 async def test_skill_upload_persists_manifest_metadata(client):
     response = await client.post(
         "/v1/skills",
