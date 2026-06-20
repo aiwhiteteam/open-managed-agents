@@ -184,8 +184,8 @@ async def _run_session_turn(session_id: str) -> None:
                 outcome_event = await events_q.append_event(
                     db,
                     session,
-                    event_type="span.outcome_evaluation",
-                    payload={"type": "span.outcome_evaluation", **outcome_evaluation},
+                    event_type="span.outcome_evaluation_end",
+                    payload={"type": "span.outcome_evaluation_end", **outcome_evaluation},
                 )
                 outcome_evaluation = {**outcome_evaluation, "event_id": outcome_event.id}
                 status_details = _status_details_with_outcome_evaluation(status_details, outcome_evaluation)
@@ -1263,8 +1263,16 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
     if event_type == "agent_updated_stream_event":
         agent = getattr(event, "new_agent", None)
         return {
-            "type": "agent.updated",
-            "name": str(getattr(agent, "name", "") or "agent"),
+            "type": "agent.thinking",
+            "content": [
+                {
+                    "type": "json",
+                    "json": {
+                        "event": "agent_updated",
+                        "name": str(getattr(agent, "name", "") or "agent"),
+                    },
+                }
+            ],
             "source": "openai_agents_sdk",
         }
 
@@ -1336,8 +1344,9 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
         }
     if name == "mcp_list_tools":
         return {
-            "type": "agent.mcp_list_tools",
+            "type": "agent.mcp_tool_result",
             "name": _raw_item_name(raw_item, fallback="mcp"),
+            "tool_use_id": _raw_item_id(raw_item),
             "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
             "source": "openai_agents_sdk",
         }
@@ -1349,14 +1358,14 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
         }
     if name == "handoff_requested":
         return {
-            "type": "agent.handoff_requested",
-            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "type": "agent.thinking",
+            "content": [{"type": "json", "json": {"event": "handoff_requested", "item": _raw_item_summary(raw_item)}}],
             "source": "openai_agents_sdk",
         }
     if name == "handoff_occured":
         return {
-            "type": "agent.handoff_occurred",
-            "content": [{"type": "json", "json": _raw_item_summary(raw_item)}],
+            "type": "agent.thinking",
+            "content": [{"type": "json", "json": {"event": "handoff_occurred", "item": _raw_item_summary(raw_item)}}],
             "source": "openai_agents_sdk",
         }
     return None

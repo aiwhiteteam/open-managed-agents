@@ -88,7 +88,7 @@ def test_openai_stream_reasoning_maps_to_agent_thinking_event():
     assert mapped["content"][0]["json"]["type"] == "reasoning"
 
 
-def test_openai_agent_update_maps_to_agent_event():
+def test_openai_agent_update_maps_to_thinking_event():
     event = SimpleNamespace(
         type="agent_updated_stream_event",
         new_agent=SimpleNamespace(name="Researcher"),
@@ -96,11 +96,33 @@ def test_openai_agent_update_maps_to_agent_event():
 
     mapped = _map_openai_stream_event(event)
 
-    assert mapped == {
-        "type": "agent.updated",
-        "name": "Researcher",
-        "source": "openai_agents_sdk",
-    }
+    assert mapped["type"] == "agent.thinking"
+    assert mapped["content"][0]["json"] == {"event": "agent_updated", "name": "Researcher"}
+
+
+def test_openai_stream_mcp_list_tools_maps_to_sdk_event_union():
+    event = _run_item_event(
+        "mcp_list_tools",
+        {"type": "mcp_list_tools", "server_label": "github", "id": "mcp_list_1"},
+    )
+
+    mapped = _map_openai_stream_event(event)
+
+    assert mapped["type"] == "agent.mcp_tool_result"
+    assert mapped["name"] == "github"
+    assert mapped["tool_use_id"] == "mcp_list_1"
+
+
+def test_openai_handoff_maps_to_thinking_metadata():
+    event = _run_item_event(
+        "handoff_requested",
+        {"type": "handoff", "target_agent": "Researcher"},
+    )
+
+    mapped = _map_openai_stream_event(event)
+
+    assert mapped["type"] == "agent.thinking"
+    assert mapped["content"][0]["json"]["event"] == "handoff_requested"
 
 
 def test_explicit_confirmation_only_blocks_marked_events():

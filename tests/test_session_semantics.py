@@ -521,8 +521,8 @@ async def test_define_outcome_emits_evaluation_span_and_session_summary(client):
     )
     assert response.status_code == 200, response.text
 
-    events = await _wait_for_event_type(client, session["id"], "span.outcome_evaluation")
-    outcome_event = next(event for event in events if event["type"] == "span.outcome_evaluation")
+    events = await _wait_for_event_type(client, session["id"], "span.outcome_evaluation_end")
+    outcome_event = next(event for event in events if event["type"] == "span.outcome_evaluation_end")
     assert outcome_event["outcome"]["objective"] == "Produce a customer-ready summary."
     assert outcome_event["outcome"]["max_iterations"] == 2
     assert outcome_event["result"]["type"] == "deterministic_local_grader"
