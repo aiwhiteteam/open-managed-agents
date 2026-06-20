@@ -199,6 +199,8 @@ def environment_config_to_response(config: dict[str, Any]) -> dict[str, Any]:
 def environment_config_with_scope(config: dict[str, Any] | None, scope: str | None) -> dict[str, Any]:
     normalized = dict(config or {"type": "cloud"})
     if scope is not None:
+        if normalized.get("type", "cloud") != "self_hosted":
+            raise ValueError("environment scope is only supported for self_hosted environments")
         normalized["_scope"] = scope
     return normalized
 

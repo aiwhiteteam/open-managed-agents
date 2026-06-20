@@ -174,3 +174,37 @@ async def test_environment_rejects_invalid_policy_shapes(client):
         json={"name": "bad-resources", "config": {"type": "cloud", "resources": {"memory_mb": 0}}},
     )
     assert response.status_code == 422
+
+
+async def test_environment_scope_only_applies_to_self_hosted(client):
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "cloud-scope", "config": {"type": "cloud"}, "scope": "account"},
+    )
+    assert response.status_code == 422
+    assert "self_hosted" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "self-hosted-scope", "config": {"type": "self_hosted"}, "scope": "account"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["scope"] == "account"
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "cloud-update-scope", "config": {"type": "cloud"}},
+    )
+    assert response.status_code == 201, response.text
+    cloud_environment = response.json()
+
+    response = await client.post(
+        f"/v1/environments/{cloud_environment['id']}",
+        headers=TEST_HEADERS,
+        json={"scope": "organization"},
+    )
+    assert response.status_code == 422
+    assert "self_hosted" in response.json()["error"]["message"]

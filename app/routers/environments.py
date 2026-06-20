@@ -36,10 +36,14 @@ async def create_environment(
     body: EnvironmentCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    try:
+        config = environment_config_with_scope(body.config, body.scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     environment = await env_q.create_environment(
         db,
         name=body.name,
-        config=environment_config_with_scope(body.config, body.scope),
+        config=config,
         description=body.description,
         metadata=normalize_metadata(body.metadata),
     )
@@ -81,10 +85,13 @@ async def update_environment(
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
     config = body.config
-    if body.scope is not None:
-        config = environment_config_with_scope(config or environment.config, body.scope)
-    elif config is not None:
-        config = environment_config_with_scope(config, environment_scope(environment.config))
+    try:
+        if body.scope is not None:
+            config = environment_config_with_scope(config or environment.config, body.scope)
+        elif config is not None:
+            config = environment_config_with_scope(config, environment_scope(environment.config))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     environment = await env_q.update_environment(
         db,
         environment,
