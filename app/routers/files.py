@@ -25,6 +25,7 @@ from app.storage import (
     save_file_bytes,
     should_store_in_object_storage,
 )
+from app.workspace import workspace_id_or_default
 
 router = APIRouter(
     prefix="/v1/files",
@@ -147,8 +148,7 @@ async def complete_file_upload(body: CompleteFileBody, db: AsyncSession = Depend
             raise HTTPException(status_code=503, detail="Object storage is not configured")
     except StorageConfigurationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    if not body.key.startswith("oma/staged-uploads/") and "/staged-uploads/" not in body.key:
-        raise HTTPException(status_code=422, detail="Only staged upload keys can be completed")
+    _validate_staged_upload_key(body.key)
     info = await get_file_info(body.key)
     mime_type = body.mime_type or info.get("ContentType") or "application/octet-stream"
     size_bytes = body.size_bytes or info.get("ContentLength")
@@ -279,3 +279,12 @@ async def _find_deduplicated_file(db: AsyncSession, *, sha256: str | None):
     if not (is_object_storage_backend(existing.storage_backend) and existing.storage_key):
         return None
     return existing
+
+
+def _validate_staged_upload_key(key: str) -> None:
+    workspace_prefix = f"workspaces/{workspace_id_or_default()}/"
+    if not key.startswith(workspace_prefix) or "/staged-uploads/" not in key:
+        raise HTTPException(
+            status_code=422,
+            detail="Only staged upload keys for the current workspace can be completed",
+        )

@@ -95,6 +95,38 @@ async def test_file_upload_size_limit(client, monkeypatch):
     assert "maximum size" in response.json()["error"]["message"]
 
 
+async def test_file_complete_requires_current_workspace_staged_key(client):
+    response = await client.post(
+        "/v1/files/presign",
+        headers=TEST_HEADERS,
+        json={"filename": "staged.txt", "mime_type": "text/plain"},
+    )
+    assert response.status_code == 200, response.text
+    staged = response.json()
+    assert staged["key"].startswith("workspaces/wrkspc_default/")
+    assert "/staged-uploads/" in staged["key"]
+
+    response = await client.post(
+        "/v1/files/complete",
+        headers=TEST_HEADERS,
+        json={
+            "key": "workspaces/other/oma/staged-uploads/2026-01-01/obj_staged.txt",
+            "filename": "bad.txt",
+        },
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        "/v1/files/complete",
+        headers=TEST_HEADERS,
+        json={"key": staged["key"], "filename": "staged.txt", "mime_type": "text/plain"},
+    )
+    assert response.status_code == 201, response.text
+    completed = response.json()
+    assert completed["type"] == "file"
+    assert completed["filename"] == "staged.txt"
+
+
 async def test_skill_create_version_and_download(client):
     response = await client.post(
         "/v1/skills",
