@@ -25,7 +25,7 @@ Current passing coverage:
 - `client.beta.sessions.create/retrieve/update/list/archive/delete`, including `deployment_id` filtering.
 - `client.beta.sessions.create` resource union for `file`, `github_repository`, and `memory_store`, including GitHub token redaction.
 - `client.beta.sessions.update` metadata/title patches and session-local agent `tools`/`mcp_servers` replacement.
-- `client.beta.sessions.events.send/list`, including `user.tool_result` and SDK `types[]` filtering.
+- `client.beta.sessions.events.send/list`, including `user.tool_result`, `system.message` batch ordering, and SDK `types[]` filtering.
 - SDK SSE decoder and Managed Agents stream-event union parsing for session event payloads.
 - `client.beta.sessions.resources.add/retrieve/update/list/delete`.
 - `client.beta.sessions.threads.list/retrieve/archive`.
@@ -46,7 +46,7 @@ Current passing coverage:
 - `client.beta.user_profiles.create/retrieve/update/list/create_enrollment_url`, including `external` and `resold` relationships.
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` and `before_id` pagination for files.
-- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status` and `status` vs `include_archived` validation, memory `path_prefix`/`depth`, memory path validation, `order/order_by`, `deployment_id`, memory-version `api_key_id`/`session_id`/`view`, `trigger_type`, and `has_error` success/error semantics.
+- Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status` and `status` vs `include_archived` validation, memory `path_prefix`/`depth`, memory path validation, `order/order_by`, `deployment_id`, memory-version `api_key_id`/`session_id`/`operation`/`view`, `trigger_type`, and `has_error` success/error semantics.
 - Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and SDK route-specific high-limit clamping.
 
 Important remaining coverage gaps:

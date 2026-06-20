@@ -59,6 +59,7 @@ from app.session_state import (
 )
 
 SESSION_LIST_STATUSES = {SESSION_IDLE, SESSION_RUNNING, SESSION_RESCHEDULING, SESSION_TERMINATED}
+SYSTEM_MESSAGE_PREDECESSORS = {"user.custom_tool_result", "user.message", "user.tool_result"}
 
 router = APIRouter(
     prefix="/v1/sessions",
@@ -612,6 +613,7 @@ async def stream_session_thread_events(
 
 async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -> None:
     event_types = [event.type for event in event_inputs]
+    _validate_system_message_batch(event_types)
     if session.status in ACTIVE_STATUSES:
         if event_types == ["user.interrupt"]:
             return
@@ -620,13 +622,30 @@ async def _validate_event_batch(db: AsyncSession, session, event_inputs: list) -
     if is_waiting_for_action(session.stop_reason):
         if event_types == ["user.interrupt"]:
             return
-        if not all(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
+        action_result_inputs = [event_input for event_input in event_inputs if event_input.type != "system.message"]
+        if not action_result_inputs or not all(event_input.type in ACTION_RESULT_EVENTS for event_input in action_result_inputs):
             raise HTTPException(status_code=409, detail="Session is waiting for required action results")
-        await _validate_action_results(db, session, event_inputs)
+        await _validate_action_results(db, session, action_result_inputs)
         return
 
     if any(event_type in ACTION_RESULT_EVENTS for event_type in event_types):
         raise HTTPException(status_code=409, detail="Session is not waiting for action results")
+
+
+def _validate_system_message_batch(event_types: list[str]) -> None:
+    system_indexes = [index for index, event_type in enumerate(event_types) if event_type == "system.message"]
+    if not system_indexes:
+        return
+    if len(system_indexes) > 1:
+        raise HTTPException(status_code=422, detail="At most one system.message event is allowed per request")
+    system_index = system_indexes[0]
+    if system_index != len(event_types) - 1:
+        raise HTTPException(status_code=422, detail="system.message must be the final event in the request")
+    if system_index == 0 or event_types[system_index - 1] not in SYSTEM_MESSAGE_PREDECESSORS:
+        raise HTTPException(
+            status_code=422,
+            detail="system.message must immediately follow user.message, user.tool_result, or user.custom_tool_result",
+        )
 
 
 async def _validate_action_results(db: AsyncSession, session, event_inputs: list) -> None:

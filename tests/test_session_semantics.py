@@ -116,6 +116,10 @@ async def test_client_cannot_set_input_event_processed_at(client):
         json={
             "events": [
                 {
+                    "type": "user.message",
+                    "content": "use this context",
+                },
+                {
                     "type": "system.message",
                     "content": "context",
                     "processed_at": "2026-01-01T00:00:00Z",
@@ -130,6 +134,38 @@ async def test_client_cannot_set_input_event_processed_at(client):
     assert response.status_code == 200, response.text
     system_event = next(event for event in response.json()["data"] if event["type"] == "system.message")
     assert system_event["processed_at"] is None
+
+
+async def test_system_message_batch_shape_is_validated(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    invalid_batches = [
+        [{"type": "system.message", "content": "context"}],
+        [
+            {"type": "system.message", "content": "context"},
+            {"type": "user.message", "content": "work"},
+        ],
+        [
+            {"type": "user.message", "content": "work"},
+            {"type": "system.message", "content": "context"},
+            {"type": "system.message", "content": "more context"},
+        ],
+        [
+            {"type": "user.tool_confirmation", "tool_use_id": "tool_missing", "result": "allow"},
+            {"type": "system.message", "content": "context"},
+        ],
+    ]
+
+    for events in invalid_batches:
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            headers=TEST_HEADERS,
+            json={"events": events},
+        )
+
+        assert response.status_code in {409, 422}, response.text
 
 
 async def test_transient_runtime_failure_reschedules_then_caps_retries(client, monkeypatch):

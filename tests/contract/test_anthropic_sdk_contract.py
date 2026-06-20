@@ -414,13 +414,17 @@ async def test_anthropic_sdk_session_contract():
             session.id,
             events=[
                 {
+                    "type": "user.message",
+                    "content": [{"type": "text", "text": "Use the contract context."}],
+                },
+                {
                     "type": "system.message",
                     "content": [{"type": "text", "text": "Contract context."}],
                 }
             ],
             **BETA_KWARG,
         )
-        assert sent.data[0].type == "system.message"
+        assert [event.type for event in sent.data] == ["user.message", "system.message"]
 
         events = [item async for item in client.beta.sessions.events.list(session.id, limit=20, **BETA_KWARG)]
         assert any(item.type == "session.status_idle" for item in events)
