@@ -148,7 +148,13 @@ async def test_vault_credential_archive_purges_persisted_secret_values(client):
                 "type": "mcp_oauth",
                 "mcp_server_url": "https://mcp.example.invalid",
                 "access_token": "secret-access-token",
-                "refresh": {"refresh_token": "secret-refresh-token", "safe": "keep"},
+                "refresh": {
+                    "client_id": "client-1",
+                    "refresh_token": "secret-refresh-token",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {"type": "none"},
+                    "safe": "keep",
+                },
             },
         },
     )

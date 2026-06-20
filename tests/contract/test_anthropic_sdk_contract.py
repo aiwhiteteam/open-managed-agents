@@ -809,6 +809,16 @@ async def test_anthropic_sdk_vaults_and_credentials_contract():
                 "type": "mcp_oauth",
                 "mcp_server_url": "https://mcp.example.invalid",
                 "access_token": "secret-token",
+                "refresh": {
+                    "client_id": "sdk-client",
+                    "refresh_token": "sdk-refresh-secret",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {
+                        "type": "client_secret_post",
+                        "client_secret": "sdk-client-secret",
+                    },
+                    "scope": "read",
+                },
             },
             **BETA_KWARG,
         )
@@ -816,6 +826,13 @@ async def test_anthropic_sdk_vaults_and_credentials_contract():
         assert credential.vault_id == vault.id
         assert credential.auth.type == "mcp_oauth"
         assert credential.auth.mcp_server_url == "https://mcp.example.invalid"
+        assert credential.auth.refresh is not None
+        assert credential.auth.refresh.client_id == "sdk-client"
+        assert credential.auth.refresh.token_endpoint_auth.type == "client_secret_post"
+        auth_dump = str(credential.auth.model_dump())
+        assert "secret-token" not in auth_dump
+        assert "sdk-refresh-secret" not in auth_dump
+        assert "sdk-client-secret" not in auth_dump
 
         retrieved = await client.beta.vaults.credentials.retrieve(credential.id, vault_id=vault.id, **BETA_KWARG)
         assert retrieved.id == credential.id
@@ -867,6 +884,7 @@ async def test_anthropic_sdk_vaults_and_credentials_contract():
             **BETA_KWARG,
         )
         assert env_credential_updated.auth.type == "environment_variable"
+        assert env_credential_updated.auth.secret_name == "SDK_TOKEN"
         assert env_credential_updated.auth.networking.type == "unrestricted"
 
         credentials = [item async for item in client.beta.vaults.credentials.list(vault.id, limit=20, **BETA_KWARG)]

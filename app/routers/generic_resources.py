@@ -41,6 +41,8 @@ DEPLOYMENT_RUN_TRIGGER_TYPES = {"manual", "schedule"}
 MEMORY_VIEWS = {"basic", "full"}
 USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
 MAX_USER_PROFILE_FIELD_CHARS = 255
+CREDENTIAL_AUTH_TYPES = {"environment_variable", "mcp_oauth", "static_bearer"}
+CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES = {"client_secret_basic", "client_secret_post", "none"}
 
 
 @router.post("/v1/vaults", status_code=201)
@@ -918,7 +920,7 @@ async def _update(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
-    data = _normalize_resource_data(resource_type, _merge_data(resource.data, data))
+    data = _normalize_resource_data(resource_type, _merge_resource_update(resource_type, resource.data, data))
     await res_q.update_resource(
         db,
         resource,
@@ -990,6 +992,18 @@ def _merge_data(existing: dict[str, Any] | None, update: dict[str, Any]) -> dict
     return merged
 
 
+def _merge_resource_update(resource_type: str, existing: dict[str, Any] | None, update: dict[str, Any]) -> dict[str, Any]:
+    if resource_type != "credential" or "auth" not in update:
+        return _merge_data(existing, update)
+    if not isinstance(update["auth"], dict):
+        raise HTTPException(status_code=422, detail="credential auth must be an object")
+    patch = dict(update)
+    auth_patch = patch.pop("auth")
+    merged = _merge_data(existing, patch)
+    merged["auth"] = _merge_credential_auth((existing or {}).get("auth"), auth_patch)
+    return merged
+
+
 def _normalize_resource_data(resource_type: str, data: dict[str, Any]) -> dict[str, Any]:
     if resource_type == "vault":
         return _normalize_vault_data(data)
@@ -1052,8 +1066,141 @@ def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
     if "auth" not in normalized:
         auth_type = str(normalized.pop("type", "mcp_oauth"))
         normalized["auth"] = _legacy_credential_auth(auth_type, normalized)
+    normalized["auth"] = _normalize_credential_auth(normalized["auth"])
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
+
+
+def _merge_credential_auth(existing: Any, patch: dict[str, Any]) -> dict[str, Any]:
+    auth_type = _credential_auth_type(patch)
+    existing_auth = dict(existing or {})
+    existing_type = existing_auth.get("type")
+    if existing_type and existing_type != auth_type:
+        raise HTTPException(status_code=422, detail="credential auth type is immutable")
+    merged = dict(existing_auth)
+    for key, value in patch.items():
+        if key == "refresh" and isinstance(value, dict) and isinstance(merged.get("refresh"), dict):
+            merged["refresh"] = _merge_oauth_refresh(merged["refresh"], value)
+        elif value is not None or key in {"expires_at", "refresh"}:
+            merged[key] = value
+    return merged
+
+
+def _merge_oauth_refresh(existing: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+    for key, value in patch.items():
+        if (
+            key == "token_endpoint_auth"
+            and isinstance(value, dict)
+            and isinstance(merged.get("token_endpoint_auth"), dict)
+            and merged["token_endpoint_auth"].get("type") == value.get("type")
+        ):
+            token_endpoint_auth = dict(merged["token_endpoint_auth"])
+            token_endpoint_auth.update({child_key: child_value for child_key, child_value in value.items() if child_value is not None})
+            merged["token_endpoint_auth"] = token_endpoint_auth
+        elif value is not None:
+            merged[key] = value
+    return merged
+
+
+def _normalize_credential_auth(auth: Any) -> dict[str, Any]:
+    if not isinstance(auth, dict):
+        raise HTTPException(status_code=422, detail="credential auth must be an object")
+    normalized = dict(auth)
+    auth_type = _credential_auth_type(normalized)
+    normalized["type"] = auth_type
+
+    if auth_type == "environment_variable":
+        _require_credential_string(normalized, "secret_name", auth_type)
+        if "secret_value" in normalized and normalized["secret_value"] is not None:
+            normalized["secret_value"] = _string_credential_value(normalized["secret_value"], f"{auth_type}.secret_value")
+        normalized["networking"] = _normalize_credential_networking(normalized.get("networking") or {"type": "unrestricted"})
+        return normalized
+
+    _require_credential_string(normalized, "mcp_server_url", auth_type)
+    if auth_type == "static_bearer":
+        if "token" in normalized and normalized["token"] is not None:
+            normalized["token"] = _string_credential_value(normalized["token"], f"{auth_type}.token")
+        return normalized
+
+    if "access_token" in normalized and normalized["access_token"] is not None:
+        normalized["access_token"] = _string_credential_value(normalized["access_token"], f"{auth_type}.access_token")
+    if normalized.get("expires_at") is not None:
+        normalized["expires_at"] = str(normalized["expires_at"])
+    refresh = normalized.get("refresh")
+    if refresh is not None:
+        normalized["refresh"] = _normalize_oauth_refresh(refresh)
+    return normalized
+
+
+def _credential_auth_type(auth: dict[str, Any]) -> str:
+    auth_type = auth.get("type")
+    if auth_type not in CREDENTIAL_AUTH_TYPES:
+        raise HTTPException(status_code=422, detail="credential auth type must be environment_variable, mcp_oauth, or static_bearer")
+    return str(auth_type)
+
+
+def _require_credential_string(data: dict[str, Any], field: str, auth_type: str) -> str:
+    if field not in data or data[field] is None:
+        raise HTTPException(status_code=422, detail=f"{auth_type}.{field} is required")
+    value = _string_credential_value(data[field], f"{auth_type}.{field}")
+    data[field] = value
+    return value
+
+
+def _string_credential_value(value: Any, field: str) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(status_code=422, detail=f"{field} must be a string")
+    return value
+
+
+def _normalize_credential_networking(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="environment_variable.networking must be an object")
+    networking_type = value.get("type")
+    if networking_type == "unrestricted":
+        return {"type": "unrestricted"}
+    if networking_type != "limited":
+        raise HTTPException(status_code=422, detail="environment_variable.networking.type must be limited or unrestricted")
+    allowed_hosts = value.get("allowed_hosts")
+    if not isinstance(allowed_hosts, list):
+        raise HTTPException(status_code=422, detail="environment_variable.networking.allowed_hosts must be an array")
+    if len(allowed_hosts) > 16:
+        raise HTTPException(status_code=422, detail="environment_variable.networking.allowed_hosts supports at most 16 hosts")
+    hosts = []
+    for host in allowed_hosts:
+        if not isinstance(host, str) or not host or "/" in host or ":" in host:
+            raise HTTPException(status_code=422, detail="environment_variable.networking.allowed_hosts entries must be bare hostnames")
+        hosts.append(host)
+    return {"type": "limited", "allowed_hosts": hosts}
+
+
+def _normalize_oauth_refresh(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=422, detail="mcp_oauth.refresh must be an object")
+    refresh = dict(value)
+    for field in ("client_id", "refresh_token", "token_endpoint"):
+        _require_credential_string(refresh, field, "mcp_oauth.refresh")
+    token_endpoint_auth = refresh.get("token_endpoint_auth")
+    if not isinstance(token_endpoint_auth, dict):
+        raise HTTPException(status_code=422, detail="mcp_oauth.refresh.token_endpoint_auth must be an object")
+    token_endpoint_auth_type = token_endpoint_auth.get("type")
+    if token_endpoint_auth_type not in CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail="mcp_oauth.refresh.token_endpoint_auth.type must be client_secret_basic, client_secret_post, or none",
+        )
+    normalized_auth = {"type": token_endpoint_auth_type}
+    if token_endpoint_auth_type != "none" and token_endpoint_auth.get("client_secret") is not None:
+        normalized_auth["client_secret"] = _string_credential_value(
+            token_endpoint_auth["client_secret"],
+            "mcp_oauth.refresh.token_endpoint_auth.client_secret",
+        )
+    refresh["token_endpoint_auth"] = normalized_auth
+    for optional in ("resource", "scope"):
+        if refresh.get(optional) is not None:
+            refresh[optional] = _string_credential_value(refresh[optional], f"mcp_oauth.refresh.{optional}")
+    return refresh
 
 
 def _legacy_credential_auth(auth_type: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1105,9 +1252,26 @@ def _credential_auth_response(auth: dict[str, Any]) -> dict[str, Any]:
         "type": "mcp_oauth",
         "mcp_server_url": str(auth.get("mcp_server_url") or "https://example.invalid/mcp"),
         "expires_at": auth.get("expires_at"),
-        "refresh": auth.get("refresh"),
+        "refresh": _credential_refresh_response(auth.get("refresh")),
     }
     return {key: value for key, value in response.items() if value is not None}
+
+
+def _credential_refresh_response(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    token_endpoint_auth = value.get("token_endpoint_auth") or {}
+    auth_type = token_endpoint_auth.get("type")
+    if auth_type not in CREDENTIAL_TOKEN_ENDPOINT_AUTH_TYPES:
+        auth_type = "none"
+    response = {
+        "client_id": str(value.get("client_id") or ""),
+        "token_endpoint": str(value.get("token_endpoint") or ""),
+        "token_endpoint_auth": {"type": auth_type},
+        "resource": value.get("resource"),
+        "scope": value.get("scope"),
+    }
+    return {key: item for key, item in response.items() if item is not None}
 
 
 def _credential_networking_response(value: Any) -> dict[str, Any]:

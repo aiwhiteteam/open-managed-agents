@@ -242,7 +242,14 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(
         f"/v1/vaults/{vault['id']}/credentials",
         headers=TEST_HEADERS,
-        json={"name": "linear", "type": "mcp_oauth"},
+        json={
+            "display_name": "linear",
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "secret-token",
+            },
+        },
     )
     assert response.status_code == 201, response.text
     credential = response.json()
@@ -326,6 +333,81 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     assert response.json()["type"] == "deployment_run"
 
 
+async def test_vault_credential_auth_validation_and_redaction(client):
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "Credential Vault"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={"display_name": "bad", "auth": {"type": "api_key", "token": "secret"}},
+    )
+    assert response.status_code == 422
+    assert "auth type" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "oauth",
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "access-secret",
+                "refresh": {
+                    "client_id": "client-1",
+                    "refresh_token": "refresh-secret",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {
+                        "type": "client_secret_basic",
+                        "client_secret": "client-secret",
+                    },
+                    "scope": "read write",
+                },
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+    assert "access-secret" not in str(credential)
+    assert "refresh-secret" not in str(credential)
+    assert "client-secret" not in str(credential)
+    assert credential["auth"]["refresh"] == {
+        "client_id": "client-1",
+        "token_endpoint": "https://auth.example.invalid/token",
+        "token_endpoint_auth": {"type": "client_secret_basic"},
+        "scope": "read write",
+    }
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "env",
+            "auth": {
+                "type": "environment_variable",
+                "secret_name": "SDK_TOKEN",
+                "secret_value": "env-secret",
+                "networking": {"type": "limited", "allowed_hosts": ["api.example.invalid"]},
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    env_credential = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{env_credential['id']}",
+        headers=TEST_HEADERS,
+        json={"auth": {"type": "environment_variable", "networking": {"type": "unrestricted"}}},
+    )
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert updated["auth"]["secret_name"] == "SDK_TOKEN"
+    assert updated["auth"]["networking"] == {"type": "unrestricted"}
+    assert "env-secret" not in str(updated)
+
+
 async def test_vault_credential_validation_is_persisted_in_metadata(client):
     response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"display_name": "MCP Vault"})
     assert response.status_code == 201, response.text
@@ -341,7 +423,12 @@ async def test_vault_credential_validation_is_persisted_in_metadata(client):
                 "type": "mcp_oauth",
                 "mcp_server_url": "https://mcp.example.invalid",
                 "access_token": "secret-access-token",
-                "refresh": {"refresh_token": "secret-refresh-token"},
+                "refresh": {
+                    "client_id": "client-1",
+                    "refresh_token": "secret-refresh-token",
+                    "token_endpoint": "https://auth.example.invalid/token",
+                    "token_endpoint_auth": {"type": "none"},
+                },
             },
         },
     )
