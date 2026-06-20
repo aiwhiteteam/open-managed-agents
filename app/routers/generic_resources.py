@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
+from app.db.queries import events as events_q
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.models.common import ListResponse, utcnow
@@ -1488,6 +1489,11 @@ async def _maybe_create_deployment_session(db: AsyncSession, deployment, run, ru
             resource_data,
             allowed_types={"file", "github_repository", "memory_store"},
         )
+    await _append_deployment_session_events(
+        db,
+        session,
+        run_input.get("initial_events") or data.get("initial_events") or [],
+    )
     return session
 
 
@@ -1518,3 +1524,21 @@ def _deployment_agent_ref(value: Any) -> tuple[str, int | None]:
         version = value.get("version")
         return str(agent_id), int(version) if version is not None else None
     raise HTTPException(status_code=422, detail="Deployment agent must be a string or object")
+
+
+async def _append_deployment_session_events(db: AsyncSession, session, initial_events: list[Any]) -> None:
+    await events_q.append_event(
+        db,
+        session,
+        event_type="session.status_idle",
+        payload={"type": "session.status_idle", "status": "idle", "stop_reason": {"type": "end_turn"}},
+    )
+    for raw_event in initial_events:
+        if not isinstance(raw_event, dict):
+            raise HTTPException(status_code=422, detail="Deployment initial_events entries must be objects")
+        event_type = str(raw_event.get("type") or "")
+        if event_type not in {"system.message", "user.define_outcome", "user.message"}:
+            raise HTTPException(status_code=422, detail="Unsupported deployment initial event type")
+        payload = dict(raw_event)
+        payload["type"] = event_type
+        await events_q.append_event(db, session, event_type=event_type, payload=payload)

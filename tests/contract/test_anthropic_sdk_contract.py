@@ -1093,6 +1093,8 @@ async def test_anthropic_sdk_deployments_contract():
         assert run_resources_by_type["github_repository"].url == "https://github.com/example/deployment-repo"
         assert "authorization_token" not in run_resources_by_type["github_repository"].model_dump()
         assert run_resources_by_type["memory_store"].memory_store_id == memory_store.id
+        run_events = [item async for item in client.beta.sessions.events.list(run.session_id, limit=20, **BETA_KWARG)]
+        assert [event.type for event in run_events][:2] == ["session.status_idle", "user.message"]
 
         deployment_sessions = [
             item async for item in client.beta.sessions.list(deployment_id=deployment.id, limit=20, **BETA_KWARG)

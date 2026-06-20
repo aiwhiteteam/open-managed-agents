@@ -32,6 +32,7 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
             "name": "Daily report",
             "agent": {"id": agent["id"], "version": 1},
             "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": [{"type": "text", "text": "Run report."}]}],
             "schedule": {"type": "cron", "cron": "0 9 * * *", "timezone": "America/New_York"},
         },
     )
@@ -58,6 +59,12 @@ async def test_deployment_schedule_validation_and_run_session_linkage(client):
     session = response.json()
     assert session["metadata"]["deployment_id"] == deployment["id"]
     assert session["metadata"]["deployment_run_id"] == run["id"]
+
+    response = await client.get(f"/v1/sessions/{run['session_id']}/events", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    events = response.json()["data"]
+    assert [event["type"] for event in events][:2] == ["session.status_idle", "user.message"]
+    assert events[1]["processed_at"] is None
 
     response = await client.post(
         f"/v1/deployments/{deployment['id']}/run",
