@@ -10,6 +10,7 @@ from app.db.engine import session_scope
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
 from app.db.queries import events as events_q
+from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
 from app.runtime.providers import resolve_runtime_provider, runtime_provider_configured
 from app.runtime.sandbox import sandbox_plan_from_environment
@@ -28,6 +29,9 @@ _running_lock = asyncio.Lock()
 MAX_TRANSIENT_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_AFTER_SECONDS = 5
 MAX_RETRY_AFTER_SECONDS = 300
+MAX_MEMORY_CONTEXT_STORES = 8
+MAX_MEMORY_CONTEXT_ITEMS_PER_STORE = 20
+MAX_MEMORY_CONTEXT_CONTENT_CHARS = 1000
 
 
 @dataclass
@@ -111,8 +115,9 @@ async def _run_session_turn(session_id: str) -> None:
                 raise RuntimeError(f"Environment {session.environment_id} not found")
             history = await events_q.list_events(db, session_id=session.id, after_seq=0, limit=500)
             effective_version = _effective_agent_version(version, session.status_details)
+            runtime_context = await _runtime_context_for_session(db, session)
 
-        result = await _execute(effective_version, history, environment.config)
+        result = await _execute(effective_version, history, environment.config, runtime_context=runtime_context)
 
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id)
@@ -376,19 +381,25 @@ def _status_details_without_runtime_retry(status_details: dict[str, Any] | None)
     return details
 
 
-async def _execute(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
+async def _execute(
+    version,
+    history,
+    environment_config: dict[str, Any] | None = None,
+    *,
+    runtime_context: dict[str, Any] | None = None,
+) -> RuntimeResult:
     settings = get_settings()
     backend = settings.oma_runtime_backend
     if backend == "auto":
         backend = "openai" if runtime_provider_configured(version.model) else "local"
     if backend in {"openai", "openai_compatible"}:
         try:
-            return await _execute_openai(version, history, environment_config)
+            return await _execute_openai(version, history, environment_config, runtime_context=runtime_context)
         except ImportError:
             if settings.oma_runtime_backend == "openai":
                 raise
             logger.warning("openai_agents_sdk_unavailable_falling_back_to_local")
-    return await _execute_local(version, history, environment_config)
+    return await _execute_local(version, history, environment_config, runtime_context=runtime_context)
 
 
 def _effective_agent_version(version, status_details: dict[str, Any] | None) -> EffectiveAgentVersion:
@@ -414,7 +425,13 @@ def _effective_agent_version(version, status_details: dict[str, Any] | None) -> 
     )
 
 
-async def _execute_openai(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
+async def _execute_openai(
+    version,
+    history,
+    environment_config: dict[str, Any] | None = None,
+    *,
+    runtime_context: dict[str, Any] | None = None,
+) -> RuntimeResult:
     from agents import (
         Agent,
         CodeInterpreterTool,
@@ -459,7 +476,10 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
         agent_kwargs["default_manifest"] = sandbox_plan.run_config.manifest
     agent = agent_class(
         name=version.name,
-        instructions=version.system or "You are a helpful managed agent.",
+        instructions=_instructions_with_runtime_context(
+            version.system or "You are a helpful managed agent.",
+            runtime_context,
+        ),
         model=provider.model_id,
         model_settings=model_settings,
         tools=sdk_tools,
@@ -515,6 +535,7 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
             "filtered_model_settings": removed_model_settings,
             "enabled_sdk_tools": enabled_sdk_tools,
             "filtered_tools": filtered_tools,
+            "memory_context": _memory_context_for_run_state(runtime_context),
             "sdk_state": _safe_state(result),
         },
         sandbox_state=sandbox_plan.summary,
@@ -522,14 +543,26 @@ async def _execute_openai(version, history, environment_config: dict[str, Any] |
     )
 
 
-async def _execute_local(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:
+async def _execute_local(
+    version,
+    history,
+    environment_config: dict[str, Any] | None = None,
+    *,
+    runtime_context: dict[str, Any] | None = None,
+) -> RuntimeResult:
     await asyncio.sleep(0.05)
     sandbox_plan = sandbox_plan_from_environment(environment_config)
+    memory_context = _memory_context_for_run_state(runtime_context)
     latest_action = _latest_user_action_event(history)
     if latest_action is not None:
         return RuntimeResult(
             final_text=_local_action_result_text(latest_action),
-            run_state={"backend": "local", "agent_version_id": version.id, "resumed_from": latest_action.type},
+            run_state={
+                "backend": "local",
+                "agent_version_id": version.id,
+                "resumed_from": latest_action.type,
+                "memory_context": memory_context,
+            },
             sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
         )
 
@@ -549,7 +582,12 @@ async def _execute_local(version, history, environment_config: dict[str, Any] | 
                     }
                 ],
                 requires_action=True,
-                run_state={"backend": "local", "agent_version_id": version.id, "pending_action": "custom_tool"},
+                run_state={
+                    "backend": "local",
+                    "agent_version_id": version.id,
+                    "pending_action": "custom_tool",
+                    "memory_context": memory_context,
+                },
                 sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
             )
 
@@ -567,18 +605,112 @@ async def _execute_local(version, history, environment_config: dict[str, Any] | 
                     }
                 ],
                 requires_action=True,
-                run_state={"backend": "local", "agent_version_id": version.id, "pending_action": "tool_confirmation"},
+                run_state={
+                    "backend": "local",
+                    "agent_version_id": version.id,
+                    "pending_action": "tool_confirmation",
+                    "memory_context": memory_context,
+                },
                 sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
             )
 
         text = f"Open Managed Agents local runtime received: {latest}"
+        memory_prompt = _memory_context_prompt(runtime_context)
+        if memory_prompt:
+            text = f"{text}\n\n{memory_prompt}"
     else:
         text = "Open Managed Agents local runtime is idle."
     return RuntimeResult(
         final_text=text,
-        run_state={"backend": "local", "agent_version_id": version.id},
+        run_state={"backend": "local", "agent_version_id": version.id, "memory_context": memory_context},
         sandbox_state={**sandbox_plan.summary, "runtime_backend": "local"},
     )
+
+
+async def _runtime_context_for_session(db, session) -> dict[str, Any]:
+    session_resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        limit=1000,
+        workspace_id=session.workspace_id,
+    )
+    memory_resources = [
+        resource
+        for resource in session_resources
+        if (resource.data or {}).get("type") == "memory_store"
+    ][:MAX_MEMORY_CONTEXT_STORES]
+    memory_stores = []
+    for resource in memory_resources:
+        data = dict(resource.data or {})
+        memory_store_id = str(data.get("memory_store_id") or "")
+        if not memory_store_id:
+            continue
+        memories = await res_q.list_resources(
+            db,
+            resource_type="memory",
+            parent_id=memory_store_id,
+            limit=MAX_MEMORY_CONTEXT_ITEMS_PER_STORE,
+            workspace_id=session.workspace_id,
+        )
+        memory_stores.append(
+            {
+                "memory_store_id": memory_store_id,
+                "name": data.get("name"),
+                "mount_path": data.get("mount_path"),
+                "access": data.get("access"),
+                "instructions": data.get("instructions"),
+                "memories": [_memory_context_item(memory) for memory in memories if not (memory.data or {}).get("redacted")],
+            }
+        )
+    return {"memory_stores": memory_stores}
+
+
+def _memory_context_item(memory) -> dict[str, Any]:
+    data = dict(memory.data or {})
+    content = str(data.get("content") or "")
+    if len(content) > MAX_MEMORY_CONTEXT_CONTENT_CHARS:
+        content = f"{content[:MAX_MEMORY_CONTEXT_CONTENT_CHARS]}..."
+    return {
+        "memory_id": memory.id,
+        "path": data.get("path"),
+        "path_key": data.get("path_key"),
+        "version": data.get("version"),
+        "content": content,
+    }
+
+
+def _instructions_with_runtime_context(base: str, runtime_context: dict[str, Any] | None) -> str:
+    memory_prompt = _memory_context_prompt(runtime_context)
+    if not memory_prompt:
+        return base
+    return f"{base}\n\n{memory_prompt}"
+
+
+def _memory_context_prompt(runtime_context: dict[str, Any] | None) -> str:
+    memory_stores = _memory_context_for_run_state(runtime_context).get("memory_stores", [])
+    if not memory_stores:
+        return ""
+    lines = ["Memory context:"]
+    for store in memory_stores:
+        label = store.get("name") or store.get("memory_store_id")
+        lines.append(f"- Store {label}:")
+        instructions = store.get("instructions")
+        if instructions:
+            lines.append(f"  Instructions: {instructions}")
+        for memory in store.get("memories") or []:
+            path = memory.get("path") or memory.get("path_key") or memory.get("memory_id")
+            lines.append(f"  - {path}: {memory.get('content') or ''}")
+    return "\n".join(lines)
+
+
+def _memory_context_for_run_state(runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(runtime_context, dict):
+        return {"memory_stores": []}
+    memory_stores = runtime_context.get("memory_stores")
+    if not isinstance(memory_stores, list):
+        return {"memory_stores": []}
+    return {"memory_stores": memory_stores}
 
 
 def _latest_user_action_event(history):

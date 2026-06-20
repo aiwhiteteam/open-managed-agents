@@ -357,6 +357,63 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")
 
 
+async def test_memory_store_session_resource_is_added_to_runtime_context(client):
+    response = await client.post(
+        "/v1/memory_stores",
+        headers=TEST_HEADERS,
+        json={"name": "Customer context"},
+    )
+    assert response.status_code == 201, response.text
+    memory_store = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{memory_store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "customers/acme", "content": "ACME prefers email."},
+    )
+    assert response.status_code == 201, response.text
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session_response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "resources": [
+                {
+                    "type": "memory_store",
+                    "memory_store_id": memory_store["id"],
+                    "access": "read_only",
+                    "instructions": "Use customer preferences.",
+                }
+            ],
+        },
+    )
+    assert session_response.status_code == 201, session_response.text
+    session = session_response.json()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "summarize customer context"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    events = await _wait_for_event_type(client, session["id"], "agent.message")
+    agent_message = next(event for event in events if event["type"] == "agent.message")
+    assert "ACME prefers email." in str(agent_message["content"])
+
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    run_state = response.json()["run_state"]
+    memory_context = run_state["memory_context"]["memory_stores"][0]
+    assert memory_context["memory_store_id"] == memory_store["id"]
+    assert memory_context["instructions"] == "Use customer preferences."
+    assert memory_context["memories"][0]["content"] == "ACME prefers email."
+
+
 async def test_primary_session_thread_archive_is_persisted(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)
