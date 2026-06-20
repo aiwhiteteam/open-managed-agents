@@ -56,7 +56,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 ## Open-Core Hosted Layer
 
 - Keep core resource tables scoped by `workspace_id`; do not add organization/billing/RBAC dependencies to core.
-- Add DB-backed API keys/service accounts as an optional provider, still resolving to `CurrentWorkspace`.
+- Add service-account lifecycle APIs if needed. A DB-backed API key auth provider exists and resolves to `CurrentWorkspace`; hosted org/RBAC still belongs in the private layer.
 - Add provider interfaces for quota, audit logging, secret manager, and hosted sandbox fleet.
 - Keep cross-workspace isolation tests current for every new route group.
 - Implement organizations, members, billing, SSO, and RBAC only in a hosted/private layer that imports core.

@@ -60,6 +60,28 @@ class EnvApiKeyAuthProvider:
         )
 
 
+class DatabaseApiKeyAuthProvider:
+    async def authenticate(self, request: Request, credentials: RequestCredentials) -> CurrentWorkspace:
+        from app.db.engine import session_scope
+        from app.db.queries import api_keys as api_keys_q
+
+        token = credentials.x_api_key or _bearer_token(credentials.authorization)
+        if not token:
+            raise HTTPException(status_code=401, detail="Missing API key")
+
+        async with session_scope() as db:
+            api_key = await api_keys_q.get_api_key_by_token(db, token)
+            if api_key is None:
+                raise HTTPException(status_code=401, detail="Invalid API key")
+            await api_keys_q.touch_api_key(db, api_key)
+            await db.commit()
+            return CurrentWorkspace(
+                id=api_key.workspace_id,
+                slug=api_key.workspace_id,
+                source="database_api_key",
+            )
+
+
 async def require_api_access(
     request: Request,
     x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None,

@@ -66,6 +66,8 @@ The hosted auth provider resolves the caller to `CurrentWorkspace`. Core routers
 
 Prefer provider injection over forking or placing an HTTP proxy in front of core. A separate HTTP wrapper service should only be introduced if core is intentionally operated as a standalone internal platform service.
 
+Self-hosted deployments can also use the core `DatabaseApiKeyAuthProvider` when API keys should live in the core database. That provider still resolves only to `CurrentWorkspace`; it does not introduce organizations, members, billing, SSO, or RBAC into core.
+
 The private hosted repo should own app composition, not core behavior:
 
 ```text
