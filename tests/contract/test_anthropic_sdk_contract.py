@@ -114,6 +114,52 @@ async def test_anthropic_sdk_agent_crud_contract():
         assert archived.archived_at is not None
 
 
+async def test_anthropic_sdk_agent_tool_response_defaults_contract():
+    async with anthropic_client() as (client, _):
+        agent = await client.beta.agents.create(
+            name="SDK Tool Defaults Agent",
+            model={"id": "gpt-5.5"},
+            tools=[{"type": "agent_toolset_20260401"}],
+            **BETA_KWARG,
+        )
+        assert agent.tools[0].type == "agent_toolset_20260401"
+        assert agent.tools[0].configs == []
+        assert agent.tools[0].default_config.enabled is True
+        assert agent.tools[0].default_config.permission_policy.type == "always_allow"
+
+        mcp_agent = await client.beta.agents.create(
+            name="SDK MCP Tool Defaults Agent",
+            model={"id": "gpt-5.5"},
+            mcp_servers=[{"type": "url", "name": "github", "url": "https://mcp.example.com/github"}],
+            tools=[{"type": "mcp_toolset", "mcp_server_name": "github"}],
+            **BETA_KWARG,
+        )
+        assert mcp_agent.mcp_servers[0].name == "github"
+        assert mcp_agent.tools[0].type == "mcp_toolset"
+        assert mcp_agent.tools[0].configs == []
+        assert mcp_agent.tools[0].default_config.enabled is True
+        assert mcp_agent.tools[0].default_config.permission_policy.type == "always_ask"
+
+        environment = await client.beta.environments.create(
+            name="SDK Tool Defaults Environment",
+            config={"type": "cloud"},
+            **BETA_KWARG,
+        )
+        session = await client.beta.sessions.create(
+            agent={"type": "agent", "id": agent.id, "version": agent.version},
+            environment_id=environment.id,
+            **BETA_KWARG,
+        )
+        updated = await client.beta.sessions.update(
+            session.id,
+            agent={"tools": [{"type": "custom", "name": "lookup_minimal"}], "mcp_servers": []},
+            **BETA_KWARG,
+        )
+        assert updated.agent.tools[0].type == "custom"
+        assert updated.agent.tools[0].description == "Custom tool lookup_minimal."
+        assert updated.agent.tools[0].input_schema.type == "object"
+
+
 async def test_anthropic_sdk_files_contract():
     async with anthropic_client() as (client, _):
         uploaded = await client.beta.files.upload(

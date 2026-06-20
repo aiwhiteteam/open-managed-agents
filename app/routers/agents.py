@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_contract import validate_mcp_bindings
+from app.agent_contract import normalize_agent_tools, validate_mcp_bindings
 from app.auth import require_api_access
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
@@ -30,7 +30,8 @@ async def create_agent(
     body: AgentCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
-    validate_mcp_bindings(body.mcp_servers, body.tools)
+    tools = normalize_agent_tools(body.tools)
+    validate_mcp_bindings(body.mcp_servers, tools)
     multiagent = await _normalize_multiagent_roster(db, body.multiagent)
     skills = await _normalize_skill_refs(db, body.skills)
     agent, version = await agents_q.create_agent(
@@ -39,7 +40,7 @@ async def create_agent(
         model=body.model,
         system=body.system,
         description=body.description,
-        tools=body.tools,
+        tools=tools,
         mcp_servers=body.mcp_servers,
         skills=skills,
         multiagent=multiagent,
@@ -134,6 +135,8 @@ async def update_agent(
         update["multiagent"] = await _normalize_multiagent_roster(db, update["multiagent"])
     if "skills" in update:
         update["skills"] = await _normalize_skill_refs(db, update["skills"] or [])
+    if "tools" in update:
+        update["tools"] = normalize_agent_tools(update["tools"] or [])
     next_config = _merge_agent_update(active, agent, update)
     validate_mcp_bindings(next_config["mcp_servers"], next_config["tools"])
     version, _created = await agents_q.update_agent(

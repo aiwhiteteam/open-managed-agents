@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
-from app.agent_contract import validate_mcp_bindings
+from app.agent_contract import normalize_agent_tools, validate_mcp_bindings
 from app.auth import require_api_access
 from app.config import get_settings
 from app.db.engine import get_session, session_scope
@@ -703,6 +703,7 @@ async def _merge_session_agent_overlay(db: AsyncSession, session, update: dict[s
         tools = update["tools"] or []
         if not isinstance(tools, list):
             raise HTTPException(status_code=422, detail="agent.tools must be an array or null")
+        tools = normalize_agent_tools(tools)
         overlay["tools"] = tools
     if "mcp_servers" in update:
         mcp_servers = update["mcp_servers"] or []
