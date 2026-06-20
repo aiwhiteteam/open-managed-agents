@@ -35,7 +35,7 @@ Current passing coverage:
 - Skill multipart uploads for both create paths, using the official SDK's `display_title` and `files` request shape.
 - Official-compatible epoch-microsecond skill version identifiers.
 - `client.beta.vaults.create/retrieve/update/list/archive/delete`.
-- `client.beta.vaults.credentials.create/retrieve/update/list/archive/delete/mcp_oauth_validate`.
+- `client.beta.vaults.credentials.create/retrieve/update/list/archive/delete/mcp_oauth_validate`, including `mcp_oauth`, `static_bearer`, and `environment_variable` auth unions.
 - `client.beta.memory_stores.create/retrieve/update/list/archive/delete`.
 - `client.beta.memory_stores.memories.create/retrieve/update/list/delete`.
 - `client.beta.memory_stores.memory_versions.retrieve/list/redact`.

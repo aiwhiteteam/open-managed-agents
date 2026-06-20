@@ -761,8 +761,38 @@ async def test_anthropic_sdk_vaults_and_credentials_contract():
         assert validation.status == "unknown"
         assert validation.vault_id == vault.id
 
+        env_credential = await client.beta.vaults.credentials.create(
+            vault.id,
+            display_name="SDK Env Token",
+            auth={
+                "type": "environment_variable",
+                "secret_name": "SDK_TOKEN",
+                "secret_value": "secret-token",
+                "networking": {"type": "limited", "allowed_hosts": ["api.example.invalid"]},
+            },
+            **BETA_KWARG,
+        )
+        assert env_credential.auth.type == "environment_variable"
+        assert env_credential.auth.secret_name == "SDK_TOKEN"
+        assert env_credential.auth.networking.type == "limited"
+        assert "secret_value" not in env_credential.auth.model_dump()
+
+        env_credential_updated = await client.beta.vaults.credentials.update(
+            env_credential.id,
+            vault_id=vault.id,
+            auth={
+                "type": "environment_variable",
+                "secret_value": "rotated-secret",
+                "networking": {"type": "unrestricted"},
+            },
+            **BETA_KWARG,
+        )
+        assert env_credential_updated.auth.type == "environment_variable"
+        assert env_credential_updated.auth.networking.type == "unrestricted"
+
         credentials = [item async for item in client.beta.vaults.credentials.list(vault.id, limit=20, **BETA_KWARG)]
         assert any(item.id == credential.id for item in credentials)
+        assert any(item.id == env_credential.id for item in credentials)
 
         archived_credential = await client.beta.vaults.credentials.archive(
             credential.id,
