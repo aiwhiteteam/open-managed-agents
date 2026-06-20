@@ -307,6 +307,42 @@ async def test_deployment_rejects_bad_timezone_and_paused_run(client):
     assert response.status_code == 409
 
 
+async def test_deployment_list_status_filter_contract(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Status filter deployment",
+            "agent": {"id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "initial_events": [{"type": "user.message", "content": "status filter"}],
+        },
+    )
+    assert response.status_code == 201, response.text
+    deployment = response.json()
+
+    response = await client.post(f"/v1/deployments/{deployment['id']}/pause", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.get("/v1/deployments", headers=TEST_HEADERS, params={"status": "paused"})
+    assert response.status_code == 200, response.text
+    assert [item["id"] for item in response.json()["data"]] == [deployment["id"]]
+
+    response = await client.get(
+        "/v1/deployments",
+        headers=TEST_HEADERS,
+        params={"status": "paused", "include_archived": True},
+    )
+    assert response.status_code == 422
+    assert "cannot be combined" in response.json()["error"]["message"]
+
+    response = await client.get("/v1/deployments", headers=TEST_HEADERS, params={"status": "archived"})
+    assert response.status_code == 422
+
+
 async def test_deployment_run_records_session_creation_errors(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)

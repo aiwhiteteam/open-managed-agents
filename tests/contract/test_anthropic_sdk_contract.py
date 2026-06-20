@@ -1191,6 +1191,14 @@ async def test_anthropic_sdk_deployments_contract():
         assert all(item.agent.id == agent.id for item in filtered_deployments)
         assert all(item.status == "active" for item in filtered_deployments)
 
+        with pytest.raises(anthropic.UnprocessableEntityError):
+            await client.beta.deployments.list(
+                status="active",
+                include_archived=True,
+                limit=20,
+                **BETA_KWARG,
+            )
+
         archived = await client.beta.deployments.archive(deployment.id, **BETA_KWARG)
         assert archived.archived_at is not None
 

@@ -522,6 +522,10 @@ async def list_deployments(
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
     db: AsyncSession = Depends(get_session),
 ):
+    if status is not None and status not in {"active", "paused"}:
+        raise HTTPException(status_code=422, detail="Deployment status filter must be active or paused")
+    if include_archived and status is not None:
+        raise HTTPException(status_code=422, detail="status cannot be combined with include_archived")
     return await _list_top_level(
         db,
         "deployment",
