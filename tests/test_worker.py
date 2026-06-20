@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
+
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
-from app.worker import run_worker
+from app.worker import _next_runnable_work, run_worker
 from tests.conftest import TEST_HEADERS
 
 
@@ -41,6 +43,33 @@ async def test_worker_once_consumes_queued_work(client):
     response = await client.get(f"/v1/environments/{environment['id']}/work/stats", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
     assert response.json()["completed"] == 1
+
+
+async def test_worker_skips_rescheduled_work_before_retry_at(client):
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "self-hosted-reschedule-worker", "config": {"type": "self_hosted"}},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+
+    async with session_scope() as db:
+        await res_q.create_resource(
+            db,
+            resource_type="environment_work",
+            parent_id=environment["id"],
+            name="session:future",
+            status="rescheduling",
+            data={
+                "session_id": "sess_future",
+                "attempt": 1,
+                "retry_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            },
+        )
+        await db.commit()
+
+    assert await _next_runnable_work(environment_id=environment["id"]) is None
 
 
 async def test_vault_credential_response_redacts_secret_fields(client):

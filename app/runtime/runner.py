@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -24,6 +25,9 @@ from app.session_state import (
 logger = structlog.get_logger()
 _running_sessions: set[str] = set()
 _running_lock = asyncio.Lock()
+MAX_TRANSIENT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_AFTER_SECONDS = 5
+MAX_RETRY_AFTER_SECONDS = 300
 
 
 @dataclass
@@ -136,6 +140,7 @@ async def _run_session_turn(session_id: str) -> None:
                     db,
                     session,
                     status=SESSION_IDLE,
+                    status_details=_status_details_without_runtime_retry(session.status_details),
                     stop_reason=stop_reason,
                     run_state=result.run_state,
                     sandbox_state=result.sandbox_state,
@@ -168,6 +173,7 @@ async def _run_session_turn(session_id: str) -> None:
                 db,
                 session,
                 status=SESSION_IDLE,
+                status_details=_status_details_without_runtime_retry(session.status_details),
                 stop_reason=stop_reason,
                 run_state=result.run_state,
                 sandbox_state=result.sandbox_state,
@@ -185,10 +191,17 @@ async def _run_session_turn(session_id: str) -> None:
             )
             await db.commit()
     except Exception as exc:
-        logger.exception("session_run_failed", session_id=session_id)
+        if _is_transient_runtime_error(exc):
+            logger.warning("session_run_transient_error", session_id=session_id, error_type=exc.__class__.__name__)
+        else:
+            logger.exception("session_run_failed", session_id=session_id)
         async with session_scope() as db:
             session = await sessions_q.get_session(db, session_id)
             if session is None:
+                return
+            if _is_transient_runtime_error(exc):
+                await _mark_transient_runtime_failure(db, session, exc)
+                await db.commit()
                 return
             stop_reason = {"type": "error"}
             await sessions_q.update_session(db, session, status=SESSION_TERMINATED, stop_reason=stop_reason)
@@ -209,6 +222,158 @@ async def _run_session_turn(session_id: str) -> None:
                 payload={"type": "session.status_terminated", "status": SESSION_TERMINATED, "stop_reason": stop_reason},
             )
             await db.commit()
+
+
+async def _mark_transient_runtime_failure(db, session, exc: Exception) -> None:
+    details = dict(session.status_details or {})
+    retry_state = dict(details.get("runtime_retry") or {})
+    attempt = int(retry_state.get("attempt") or 0) + 1
+    retry_after_seconds = _retry_after_seconds(exc, attempt)
+    retry_at = datetime.now(timezone.utc) + timedelta(seconds=retry_after_seconds)
+    error = {
+        "type": exc.__class__.__name__,
+        "message": str(exc),
+        "status_code": _status_code(exc),
+    }
+    details["runtime_retry"] = {
+        "attempt": attempt,
+        "max_attempts": MAX_TRANSIENT_RETRY_ATTEMPTS,
+        "retry_after_seconds": retry_after_seconds,
+        "retry_at": retry_at.isoformat(),
+        "error": error,
+    }
+    if attempt >= MAX_TRANSIENT_RETRY_ATTEMPTS:
+        stop_reason = {
+            "type": "error",
+            "transient": True,
+            "attempt": attempt,
+            "max_attempts": MAX_TRANSIENT_RETRY_ATTEMPTS,
+            "error_type": exc.__class__.__name__,
+        }
+        await sessions_q.update_session(
+            db,
+            session,
+            status=SESSION_TERMINATED,
+            status_details=details,
+            stop_reason=stop_reason,
+        )
+        await events_q.append_event(
+            db,
+            session,
+            event_type="session.error",
+            payload={
+                "type": "session.error",
+                "message": str(exc),
+                "error_type": exc.__class__.__name__,
+                "transient": True,
+                "attempt": attempt,
+            },
+        )
+        await events_q.append_event(
+            db,
+            session,
+            event_type="session.status_terminated",
+            payload={"type": "session.status_terminated", "status": SESSION_TERMINATED, "stop_reason": stop_reason},
+        )
+        return
+
+    stop_reason = {
+        "type": "transient_error",
+        "error_type": exc.__class__.__name__,
+        "attempt": attempt,
+        "max_attempts": MAX_TRANSIENT_RETRY_ATTEMPTS,
+        "retry_after_seconds": retry_after_seconds,
+        "retry_at": retry_at.isoformat(),
+    }
+    await sessions_q.update_session(
+        db,
+        session,
+        status=SESSION_RESCHEDULING,
+        status_details=details,
+        stop_reason=stop_reason,
+    )
+    await events_q.append_event(
+        db,
+        session,
+        event_type="session.error",
+        payload={
+            "type": "session.error",
+            "message": str(exc),
+            "error_type": exc.__class__.__name__,
+            "transient": True,
+            "attempt": attempt,
+        },
+    )
+    await events_q.append_event(
+        db,
+        session,
+        event_type="session.status_rescheduling",
+        payload={"type": "session.status_rescheduling", "status": SESSION_RESCHEDULING, "stop_reason": stop_reason},
+    )
+
+
+def _is_transient_runtime_error(exc: Exception) -> bool:
+    status_code = _status_code(exc)
+    if status_code is not None and (status_code in {408, 409, 425, 429} or status_code >= 500):
+        return True
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    name = exc.__class__.__name__.lower()
+    return any(
+        marker in name
+        for marker in (
+            "ratelimit",
+            "rate_limit",
+            "timeout",
+            "connection",
+            "temporar",
+            "serviceunavailable",
+            "internalserver",
+        )
+    )
+
+
+def _status_code(exc: Exception) -> int | None:
+    for attr in ("status_code", "status"):
+        value = getattr(exc, attr, None)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _retry_after_seconds(exc: Exception, attempt: int) -> int:
+    direct = _positive_int(getattr(exc, "retry_after", None))
+    if direct is not None:
+        return min(direct, MAX_RETRY_AFTER_SECONDS)
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        header_value = None
+        try:
+            header_value = headers.get("retry-after")
+        except AttributeError:
+            header_value = None
+        parsed = _positive_int(header_value)
+        if parsed is not None:
+            return min(parsed, MAX_RETRY_AFTER_SECONDS)
+    backoff = DEFAULT_RETRY_AFTER_SECONDS * (2 ** max(attempt - 1, 0))
+    return min(backoff, MAX_RETRY_AFTER_SECONDS)
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _status_details_without_runtime_retry(status_details: dict[str, Any] | None) -> dict[str, Any]:
+    details = dict(status_details or {})
+    details.pop("runtime_retry", None)
+    return details
 
 
 async def _execute(version, history, environment_config: dict[str, Any] | None = None) -> RuntimeResult:

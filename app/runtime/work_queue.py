@@ -10,6 +10,7 @@ from app.db.engine import session_scope
 from app.db.models import ManagedResource, ManagedSession
 from app.db.queries import resources as res_q
 from app.db.queries import sessions as sessions_q
+from app.session_state import SESSION_RESCHEDULING, SESSION_TERMINATED
 
 logger = structlog.get_logger()
 
@@ -47,7 +48,7 @@ async def enqueue_session_run(
 async def execute_work_item(work_id: str) -> None:
     async with session_scope() as db:
         work = await res_q.get_resource(db, resource_id=work_id, resource_type="environment_work")
-        if work is None or work.status not in RUNNABLE_WORK_STATUSES:
+        if work is None or not is_work_ready_for_execution(work):
             return
         data = dict(work.data or {})
         data["attempt"] = int(data.get("attempt") or 0) + 1
@@ -80,7 +81,14 @@ async def execute_work_item(work_id: str) -> None:
         data["finished_at"] = _utcnow_iso()
         data["session_status"] = session.status if session is not None else "missing"
         status = "completed"
-        if session is not None and session.status == "terminated" and (session.stop_reason or {}).get("type") == "error":
+        if session is not None and session.status == SESSION_RESCHEDULING:
+            stop_reason = dict(session.stop_reason or {})
+            status = "rescheduling"
+            data["rescheduled_at"] = _utcnow_iso()
+            data["retry_at"] = stop_reason.get("retry_at")
+            data["retry_after_seconds"] = stop_reason.get("retry_after_seconds")
+            data["stop_reason"] = stop_reason
+        if session is not None and session.status == SESSION_TERMINATED and (session.stop_reason or {}).get("type") == "error":
             status = "error"
         if work.status == "stopped":
             status = "stopped"
@@ -107,7 +115,7 @@ async def lease_next_work(
     )
     now = datetime.now(timezone.utc)
     for work in reversed(candidates):
-        if work.status in RUNNABLE_WORK_STATUSES or _lease_expired(work, now):
+        if _work_available_for_lease(work, now):
             data = dict(work.data or {})
             data["attempt"] = int(data.get("attempt") or 0) + 1
             data["lease"] = {
@@ -164,6 +172,32 @@ async def stop_work(db: AsyncSession, work: ManagedResource, *, payload: dict[st
     data["stopped_at"] = _utcnow_iso()
     await res_q.update_resource(db, work, data=data, status="stopped")
     return work
+
+
+def _work_ready_for_execution(work: ManagedResource, now: datetime) -> bool:
+    if work.status == "queued":
+        return True
+    if work.status == "rescheduling":
+        return _retry_at_due(work, now)
+    return False
+
+
+def is_work_ready_for_execution(work: ManagedResource, now: datetime | None = None) -> bool:
+    return _work_ready_for_execution(work, now or datetime.now(timezone.utc))
+
+
+def _work_available_for_lease(work: ManagedResource, now: datetime) -> bool:
+    return _work_ready_for_execution(work, now) or _lease_expired(work, now)
+
+
+def _retry_at_due(work: ManagedResource, now: datetime) -> bool:
+    retry_at = (work.data or {}).get("retry_at")
+    if not isinstance(retry_at, str) or not retry_at:
+        return True
+    try:
+        return datetime.fromisoformat(retry_at) <= now
+    except ValueError:
+        return True
 
 
 def _lease_expired(work: ManagedResource, now: datetime) -> bool:

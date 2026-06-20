@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
@@ -181,3 +181,58 @@ async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     assert recovered["status"] == "leased"
     assert recovered["attempt"] == 2
     assert recovered["lease"]["worker_id"] == "worker-2"
+
+
+async def test_rescheduled_work_is_not_leased_until_retry_at(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+    future_retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+    async with session_scope() as db:
+        work = await res_q.create_resource(
+            db,
+            resource_type="environment_work",
+            parent_id=environment["id"],
+            name=f"session:{session['id']}",
+            status="rescheduling",
+            data={"session_id": session["id"], "attempt": 1, "retry_at": future_retry_at},
+        )
+        await db.commit()
+        work_id = work.id
+
+    response = await client.get(f"/v1/environments/{environment['id']}/work/stats", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["rescheduling"] == 1
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+    async with session_scope() as db:
+        work = await res_q.get_resource(
+            db,
+            resource_id=work_id,
+            resource_type="environment_work",
+            parent_id=environment["id"],
+        )
+        assert work is not None
+        data = dict(work.data)
+        data["retry_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        await res_q.update_resource(db, work, data=data, status="rescheduling")
+        await db.commit()
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-2", "lease_seconds": 30},
+    )
+    assert response.status_code == 200, response.text
+    leased = response.json()
+    assert leased["id"] == work_id
+    assert leased["status"] == "leased"
+    assert leased["lease"]["worker_id"] == "worker-2"

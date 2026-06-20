@@ -10,7 +10,7 @@ import structlog
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
 from app.logging import setup as setup_logging
-from app.runtime.work_queue import RUNNABLE_WORK_STATUSES, execute_work_item
+from app.runtime.work_queue import execute_work_item, is_work_ready_for_execution
 
 logger = structlog.get_logger()
 
@@ -53,7 +53,7 @@ async def _next_runnable_work(*, environment_id: str | None) -> dict[str, Any] |
             )
         else:
             candidates = await res_q.list_resources(db, resource_type="environment_work", limit=1000)
-        runnable = [work for work in reversed(candidates) if work.status in RUNNABLE_WORK_STATUSES]
+        runnable = [work for work in reversed(candidates) if is_work_ready_for_execution(work)]
         if not runnable:
             return None
         work = runnable[0]

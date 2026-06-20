@@ -165,6 +165,7 @@ async def environment_work_stats(
         "queued": len([w for w in queued if w.status == "queued"]),
         "leased": len([w for w in queued if w.status == "leased"]),
         "running": len([w for w in queued if w.status == "running"]),
+        "rescheduling": len([w for w in queued if w.status == "rescheduling"]),
         "completed": len([w for w in queued if w.status == "completed"]),
         "error": len([w for w in queued if w.status == "error"]),
         "stopped": len([w for w in queued if w.status == "stopped"]),

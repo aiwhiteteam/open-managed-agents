@@ -9,7 +9,7 @@ Use [docs/claude-managed-agents-alignment.md](./docs/claude-managed-agents-align
 These are not just route coverage gaps. They are semantic contracts that can become expensive to fix later if core data models or runtime state machines drift away from Claude Managed Agents.
 
 - Keep exact workspace/API-key scoping semantics. Claude API keys are workspace-scoped; core resolves every request to `CurrentWorkspace` without putting workspace IDs in public `/v1` paths.
-- Complete durable session state machine semantics: real `rescheduling`, retry windows, and persisted OpenAI Agents SDK resume state.
+- Complete durable session state machine semantics: transient runtime failures now enter `rescheduling` with retry windows and capped attempts; real durable queue execution and persisted OpenAI Agents SDK resume state remain TODO.
 - Wire `requires_action` pauses for custom tools and tool confirmations into real OpenAI Agents SDK HITL continuation, not only the MVP event contract.
 - Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
@@ -50,7 +50,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Map OpenAI Agents SDK streaming events into the full Claude Managed Agents event union.
 - Add HTTP-level runtime integration tests with mocked OpenAI-compatible endpoints. Provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers.
 - Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
-- Implement session `rescheduling` behavior for transient failures.
+- Keep session `rescheduling` behavior for transient failures covered, including retry windows and capped attempts. Durable retry execution still belongs to the production queue provider.
 - Expand session state-machine tests for worker crashes, queued continuation batches, and `user.interrupt`.
 
 ## Open-Core Hosted Layer
@@ -65,7 +65,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 - Map `cloud` environments to a real production sandbox provider.
 - Map `self_hosted` environments to a real worker queue.
-- Add external worker token auth and retry backoff. Lease ownership enforcement and automatic expired-lease recovery have local coverage.
+- Add external worker token auth and production retry execution. Lease ownership enforcement, automatic expired-lease recovery, and retry-at backoff gates have local coverage.
 - Enforce network policies, package installation controls, and sandbox resource limits.
 
 ## Skills

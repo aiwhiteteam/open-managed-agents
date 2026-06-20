@@ -132,6 +132,45 @@ async def test_client_cannot_set_input_event_processed_at(client):
     assert system_event["processed_at"] is None
 
 
+async def test_transient_runtime_failure_reschedules_then_caps_retries(client, monkeypatch):
+    from app.runtime import runner
+
+    class TransientRuntimeError(RuntimeError):
+        status_code = 429
+        retry_after = 1
+
+    async def fail_transient(*args, **kwargs):
+        raise TransientRuntimeError("rate limited")
+
+    monkeypatch.setattr(runner, "_execute", fail_transient)
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    await runner.run_session_turn(session["id"])
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    first_retry = response.json()
+    assert first_retry["status"] == "rescheduling"
+    assert first_retry["stop_reason"]["type"] == "transient_error"
+    assert first_retry["stop_reason"]["attempt"] == 1
+    assert first_retry["stop_reason"]["retry_after_seconds"] == 1
+
+    events = await _wait_for_event_type(client, session["id"], "session.status_rescheduling")
+    assert any(event["type"] == "session.error" and event["transient"] for event in events)
+
+    await runner.run_session_turn(session["id"])
+    await runner.run_session_turn(session["id"])
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    capped = response.json()
+    assert capped["status"] == "terminated"
+    assert capped["stop_reason"]["type"] == "error"
+    assert capped["stop_reason"]["transient"] is True
+    assert capped["stop_reason"]["attempt"] == 3
+
+
 async def test_tool_confirmation_requires_action_and_resumes(client):
     agent = await _create_agent(
         client,
