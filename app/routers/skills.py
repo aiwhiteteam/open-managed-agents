@@ -25,6 +25,8 @@ from app.storage import (
     should_store_in_object_storage,
 )
 
+SKILL_SOURCES = {"anthropic", "custom"}
+
 router = APIRouter(
     prefix="/v1/skills",
     tags=["skills"],
@@ -62,6 +64,9 @@ async def list_skills(
     source: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
+    if source is not None and source not in SKILL_SOURCES:
+        raise HTTPException(status_code=422, detail="source must be one of: anthropic, custom")
+
     skills = await res_q.list_resources(db, resource_type="skill", limit=1000)
     skills = sort_by_created_at(skills, order="desc")
     responses = [_skill_response(skill) for skill in skills]

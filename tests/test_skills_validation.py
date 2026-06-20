@@ -57,6 +57,13 @@ async def test_skill_upload_rejects_unsafe_archive_paths(client):
     assert "relative" in response.json()["error"]["message"]
 
 
+async def test_skill_list_rejects_invalid_source_filter(client):
+    response = await client.get("/v1/skills?source=third_party", headers=TEST_HEADERS)
+
+    assert response.status_code == 422
+    assert "source" in response.json()["error"]["message"]
+
+
 async def test_skill_upload_persists_manifest_metadata(client):
     response = await client.post(
         "/v1/skills",
