@@ -50,7 +50,7 @@ async def list_vaults(
     include_archived: bool = False,
     db: AsyncSession = Depends(get_session),
 ):
-    return await _list_top_level(db, "vault", limit, page=page, include_archived=include_archived)
+    return await _list_top_level(db, "vault", limit, page=page, include_archived=include_archived, max_limit=100)
 
 
 @router.get("/v1/vaults/{vault_id}")
@@ -175,6 +175,7 @@ async def list_memory_stores(
         include_archived=include_archived,
         created_at_gte=created_at_gte,
         created_at_lte=created_at_lte,
+        max_limit=100,
     )
 
 
@@ -536,6 +537,7 @@ async def list_deployments(
         status=status,
         created_at_gte=created_at_gte,
         created_at_lte=created_at_lte,
+        max_limit=100,
     )
 
 
@@ -788,6 +790,7 @@ async def _list_top_level(
     created_at_gte: datetime | None = None,
     created_at_lt: datetime | None = None,
     created_at_lte: datetime | None = None,
+    max_limit: int = 1000,
 ) -> ListResponse[dict]:
     resources = await res_q.list_resources(
         db,
@@ -824,7 +827,7 @@ async def _list_top_level(
             or resource.data.get("trigger") == trigger_type
         ]
     resources = sort_by_created_at(resources, order=order)
-    return paginate([_resource_response(r) for r in resources], limit=limit, page=page)
+    return paginate([_resource_response(r) for r in resources], limit=limit, page=page, max_limit=max_limit)
 
 
 async def _list_child(

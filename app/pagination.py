@@ -19,9 +19,10 @@ def paginate(
     *,
     limit: int | None = None,
     page: str | None = None,
+    max_limit: int = MAX_LIMIT,
 ) -> ListResponse[T]:
     all_items = list(items)
-    page_size = _limit(limit)
+    page_size = _limit(limit, max_limit=max_limit)
     offset = _decode_page(page)
     sliced = all_items[offset : offset + page_size]
     next_offset = offset + page_size
@@ -35,11 +36,12 @@ def paginate_by_id(
     limit: int | None = None,
     after_id: str | None = None,
     before_id: str | None = None,
+    max_limit: int = MAX_LIMIT,
 ) -> ListResponse[T]:
     all_items = list(items)
     if after_id and before_id:
         raise HTTPException(status_code=400, detail="Only one of after_id or before_id may be provided")
-    page_size = _limit(limit)
+    page_size = _limit(limit, max_limit=max_limit)
     offset = 0
     if after_id:
         offset = _index_after(all_items, after_id)
@@ -114,10 +116,10 @@ def _index_of(items: list[T], item_id: str) -> int:
     raise HTTPException(status_code=400, detail="Invalid pagination cursor")
 
 
-def _limit(value: int | None) -> int:
+def _limit(value: int | None, *, max_limit: int = MAX_LIMIT) -> int:
     if value is None:
         return DEFAULT_LIMIT
-    return max(1, min(int(value), MAX_LIMIT))
+    return max(1, min(int(value), max_limit))
 
 
 def _decode_page(value: str | None) -> int:

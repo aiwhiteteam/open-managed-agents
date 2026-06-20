@@ -68,7 +68,7 @@ async def list_agents(
         version = await agents_q.get_active_agent_version(db, agent)
         if version is not None:
             responses.append(agent_to_response(agent, version))
-    return paginate(responses, limit=limit, page=page)
+    return paginate(responses, limit=limit, page=page, max_limit=100)
 
 
 @router.get("/{agent_id}/versions", response_model=ListResponse[AgentResponse])

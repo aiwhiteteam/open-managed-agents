@@ -46,7 +46,7 @@ Current passing coverage:
 - SDK `next_page` cursor pagination for agents, sessions, skills, credentials, memories, and user profiles.
 - SDK `after_id` and `before_id` pagination for files.
 - Representative list filters and sort options: `include_archived`, `source`, `scope_id`, session `agent_id`/`agent_version`/`statuses`, deployment `agent_id`/`status` and `status` vs `include_archived` validation, memory `path_prefix`/`depth`, memory path validation, `order/order_by`, `deployment_id`, memory-version `api_key_id`/`session_id`/`view`, `trigger_type`, and `has_error` success/error semantics.
-- Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and high-limit clamping.
+- Invalid page cursor handling, expired page cursor handling, invalid file ID cursor handling, timestamp alias filtering, and SDK route-specific high-limit clamping.
 
 Important remaining coverage gaps:
 

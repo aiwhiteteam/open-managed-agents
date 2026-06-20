@@ -68,3 +68,19 @@ async def test_limit_is_clamped_to_safe_maximum(client):
     assert response.status_code == 200, response.text
     assert len(response.json()["data"]) == 3
     assert response.json()["has_more"] is False
+
+
+async def test_agent_limit_is_clamped_to_sdk_maximum(client):
+    for index in range(105):
+        response = await client.post(
+            "/v1/agents",
+            headers=TEST_HEADERS,
+            json={"name": f"Limit Agent {index}", "model": {"id": "gpt-5.5"}},
+        )
+        assert response.status_code == 201, response.text
+
+    response = await client.get("/v1/agents", headers=TEST_HEADERS, params={"limit": 5000})
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["data"]) == 100
+    assert response.json()["has_more"] is True
