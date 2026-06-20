@@ -672,6 +672,8 @@ def _validate_action_result_matches_blocker(result_type: str, payload: dict[str,
         result = payload.get("result")
         if result not in {"allow", "deny"}:
             raise HTTPException(status_code=422, detail='tool_confirmation.result must be "allow" or "deny"')
+        if result != "deny" and payload.get("deny_message") is not None:
+            raise HTTPException(status_code=422, detail="tool_confirmation.deny_message is only allowed when result is deny")
 
 
 async def _all_pending_actions_resolved(db: AsyncSession, session) -> bool:

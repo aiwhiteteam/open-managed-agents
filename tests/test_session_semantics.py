@@ -235,6 +235,22 @@ async def test_tool_confirmation_requires_action_and_resumes(client):
     response = await client.post(
         f"/v1/sessions/{session['id']}/events",
         headers=TEST_HEADERS,
+        json={
+            "events": [
+                {
+                    "type": "user.tool_confirmation",
+                    "tool_use_id": tool_use_id,
+                    "result": "allow",
+                    "deny_message": "not for allow",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422, response.text
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
         json={"events": [{"type": "user.tool_confirmation", "tool_use_id": tool_use_id, "result": "allow"}]},
     )
     assert response.status_code == 200, response.text
