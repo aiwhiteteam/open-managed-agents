@@ -338,10 +338,11 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     assert response.status_code == 201, response.text
     session = response.json()
     file_resource = next(resource for resource in session["resources"] if resource["type"] == "file")
+    assert file_resource["file_id"] != file["id"]
     assert file_resource == {
         "id": file_resource["id"],
         "type": "file",
-        "file_id": file["id"],
+        "file_id": file_resource["file_id"],
         "mount_path": "/workspace/notes.txt",
         "created_at": file_resource["created_at"],
         "updated_at": file_resource["updated_at"],
@@ -359,6 +360,22 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     assert stored["source_file_id"] == file["id"]
     assert stored["filename"] == "notes.txt"
     assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")
+
+    response = await client.delete(f"/v1/files/{file['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/files/{file_resource['file_id']}/content", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.content == b"session notes"
+
+    response = await client.delete(
+        f"/v1/sessions/{session['id']}/resources/{file_resource['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(f"/v1/files/{file_resource['file_id']}/content", headers=TEST_HEADERS)
+    assert response.status_code == 404
 
 
 async def test_session_file_resource_limit_is_enforced(client):

@@ -89,6 +89,37 @@ def rotate_session_resource_token(resource, data: dict[str, Any]) -> dict[str, A
     return current
 
 
+async def delete_session_resource_file(db: AsyncSession, resource) -> None:
+    data = dict(resource.data or {})
+    if data.get("type") != "file":
+        return
+    file_id = data.get("file_id")
+    if not isinstance(file_id, str) or not file_id:
+        return
+    scoped_file = await res_q.get_resource(
+        db,
+        resource_id=file_id,
+        resource_type="file",
+        workspace_id=resource.workspace_id,
+    )
+    if scoped_file is None:
+        return
+    scope = (scoped_file.data or {}).get("scope")
+    if not isinstance(scope, dict) or scope.get("type") != "session" or scope.get("id") != resource.parent_id:
+        return
+    if storage.is_object_storage_backend(scoped_file.storage_backend) and scoped_file.storage_key:
+        active_references = await res_q.count_resources_by_storage_key(
+            db,
+            resource_type="file",
+            storage_backend=scoped_file.storage_backend,
+            storage_key=scoped_file.storage_key,
+            workspace_id=resource.workspace_id,
+        )
+        if active_references <= 1:
+            await storage.delete_file(scoped_file.storage_key)
+    await res_q.delete_resource(db, scoped_file)
+
+
 async def session_resources_response(db: AsyncSession, session) -> list[dict[str, Any]]:
     resources = await res_q.list_resources(
         db,
@@ -188,15 +219,24 @@ async def _normalize_file_session_resource(
         raise HTTPException(status_code=404, detail="File not found")
     mount_path = str(data.get("mount_path") or f"/mnt/session/uploads/{file_id}")
     _validate_mount_path(mount_path)
+    copied = await _copy_file_for_session_resource(file_resource, session_id=session_id, workspace_id=workspace_id)
+    if copied is None:
+        raise HTTPException(status_code=500, detail="File object is not stored in object storage")
+    session_file = await _create_session_scoped_file(
+        db,
+        source_file=file_resource,
+        copied=copied,
+        session_id=session_id,
+        workspace_id=workspace_id,
+    )
     normalized = {
         "type": "file",
-        "file_id": file_id,
+        "file_id": session_file.id,
+        "source_file_id": file_id,
         "mount_path": mount_path,
         "read_only": True,
+        "session_file": copied,
     }
-    copied = await _copy_file_for_session_resource(file_resource, session_id=session_id, workspace_id=workspace_id)
-    if copied is not None:
-        normalized["session_file"] = copied
     return normalized
 
 
@@ -231,6 +271,36 @@ async def _copy_file_for_session_resource(file_resource, *, session_id: str, wor
             "url": storage.public_url_for_key(destination_key),
         },
     }
+
+
+async def _create_session_scoped_file(
+    db: AsyncSession,
+    *,
+    source_file,
+    copied: dict[str, Any],
+    session_id: str,
+    workspace_id: str,
+):
+    storage_data = copied["storage"]
+    return await res_q.create_resource(
+        db,
+        resource_type="file",
+        name=copied["filename"],
+        filename=copied["filename"],
+        content_type=copied["mime_type"],
+        data={
+            "filename": copied["filename"],
+            "mime_type": copied["mime_type"],
+            "source_file_id": source_file.id,
+            "scope": {"type": "session", "id": session_id},
+        },
+        storage_backend=storage_data["backend"],
+        storage_key=storage_data["key"],
+        storage_url=storage_data["url"],
+        size_bytes=copied.get("size_bytes"),
+        sha256=copied.get("sha256"),
+        workspace_id=workspace_id,
+    )
 
 
 def _normalize_github_session_resource(data: dict[str, Any]) -> dict[str, Any]:

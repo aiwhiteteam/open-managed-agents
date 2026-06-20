@@ -35,6 +35,7 @@ from app.pagination import filter_created_at, paginate, sort_by_created_at
 from app.runtime.work_queue import enqueue_session_run, execute_work_item, should_execute_inline
 from app.session_resources import (
     create_session_resource,
+    delete_session_resource_file,
     rotate_session_resource_token,
     session_has_memory_store,
     session_resource_response,
@@ -493,6 +494,7 @@ async def delete_session_resource(
     )
     if resource is None:
         raise HTTPException(status_code=404, detail="Session resource not found")
+    await delete_session_resource_file(db, resource)
     await res_q.delete_resource(db, resource)
     await db.commit()
     return {"id": resource.id, "type": "session_resource_deleted", "deleted": True}

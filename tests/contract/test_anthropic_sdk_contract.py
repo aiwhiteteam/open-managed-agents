@@ -399,7 +399,7 @@ async def test_anthropic_sdk_session_contract():
         assert session.agent.version == agent.version
         assert {resource.type for resource in session.resources} == {"file", "github_repository", "memory_store"}
         initial_resources_by_type = {resource.type: resource for resource in session.resources}
-        assert initial_resources_by_type["file"].file_id == uploaded.id
+        assert initial_resources_by_type["file"].file_id != uploaded.id
         assert initial_resources_by_type["github_repository"].url == "https://github.com/example/repo"
         assert initial_resources_by_type["github_repository"].checkout.name == "main"
         assert "authorization_token" not in initial_resources_by_type["github_repository"].model_dump()
@@ -450,7 +450,7 @@ async def test_anthropic_sdk_session_contract():
             **BETA_KWARG,
         )
         assert resource.type == "file"
-        assert resource.file_id == uploaded.id
+        assert resource.file_id != uploaded.id
 
         retrieved_resource = await client.beta.sessions.resources.retrieve(
             resource.id,
@@ -465,7 +465,7 @@ async def test_anthropic_sdk_session_contract():
         assert any(item.type == "memory_store" and item.memory_store_id == memory_store.id for item in resources)
 
         scoped_files = [item async for item in client.beta.files.list(scope_id=session.id, limit=20, **BETA_KWARG)]
-        scoped_file = next(item for item in scoped_files if item.id == uploaded.id)
+        scoped_file = next(item for item in scoped_files if item.id == resource.file_id)
         assert scoped_file.scope is not None
         assert scoped_file.scope.type == "session"
         assert scoped_file.scope.id == session.id
@@ -1115,7 +1115,7 @@ async def test_anthropic_sdk_deployments_contract():
 
         run_session = await client.beta.sessions.retrieve(run.session_id, **BETA_KWARG)
         run_resources_by_type = {resource.type: resource for resource in run_session.resources}
-        assert run_resources_by_type["file"].file_id == uploaded.id
+        assert run_resources_by_type["file"].file_id != uploaded.id
         assert run_resources_by_type["github_repository"].url == "https://github.com/example/deployment-repo"
         assert "authorization_token" not in run_resources_by_type["github_repository"].model_dump()
         assert run_resources_by_type["memory_store"].memory_store_id == memory_store.id

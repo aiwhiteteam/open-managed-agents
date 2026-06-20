@@ -223,7 +223,7 @@ async def test_deployment_run_mounts_deployment_resources(client):
     assert response.status_code == 200, response.text
     session = response.json()
     resources_by_type = {resource["type"]: resource for resource in session["resources"]}
-    assert resources_by_type["file"]["file_id"] == file["id"]
+    assert resources_by_type["file"]["file_id"] != file["id"]
     assert resources_by_type["file"]["mount_path"] == "/workspace/deployment-notes.txt"
     assert resources_by_type["github_repository"]["url"] == "https://github.com/example/resource-repo"
     assert resources_by_type["github_repository"]["checkout"] == {"type": "branch", "name": "main"}
