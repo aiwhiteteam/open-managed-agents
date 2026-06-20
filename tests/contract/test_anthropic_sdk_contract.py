@@ -813,6 +813,19 @@ async def test_anthropic_sdk_deployments_contract():
         listed = [item async for item in client.beta.deployments.list(limit=20, **BETA_KWARG)]
         assert any(item.id == deployment.id for item in listed)
 
+        filtered_deployments = [
+            item
+            async for item in client.beta.deployments.list(
+                agent_id=agent.id,
+                status="active",
+                limit=20,
+                **BETA_KWARG,
+            )
+        ]
+        assert any(item.id == deployment.id for item in filtered_deployments)
+        assert all(item.agent.id == agent.id for item in filtered_deployments)
+        assert all(item.status == "active" for item in filtered_deployments)
+
         archived = await client.beta.deployments.archive(deployment.id, **BETA_KWARG)
         assert archived.archived_at is not None
 

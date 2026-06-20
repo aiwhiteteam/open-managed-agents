@@ -442,6 +442,7 @@ async def list_deployments(
     limit: int = 50,
     page: str | None = None,
     include_archived: bool = False,
+    agent_id: str | None = None,
     status: str | None = None,
     created_at_gte: datetime | None = Query(default=None, alias="created_at[gte]"),
     created_at_lte: datetime | None = Query(default=None, alias="created_at[lte]"),
@@ -453,6 +454,7 @@ async def list_deployments(
         limit,
         page=page,
         include_archived=include_archived,
+        agent_id=agent_id,
         status=status,
         created_at_gte=created_at_gte,
         created_at_lte=created_at_lte,
@@ -683,6 +685,7 @@ async def _list_top_level(
     page: str | None = None,
     include_archived: bool = False,
     parent_id: str | None = None,
+    agent_id: str | None = None,
     status: str | None = None,
     order: str = "desc",
     has_error: bool | None = None,
@@ -708,6 +711,12 @@ async def _list_top_level(
     )
     if status is not None:
         resources = [resource for resource in resources if resource.status == status or resource.data.get("status") == status]
+    if agent_id is not None:
+        resources = [
+            resource
+            for resource in resources
+            if _deployment_agent_response(resource.data.get("agent")).get("id") == agent_id
+        ]
     if has_error is not None:
         resources = [resource for resource in resources if bool(resource.data.get("error")) is has_error]
     if trigger_type is not None:
