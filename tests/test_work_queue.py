@@ -134,6 +134,72 @@ async def test_self_hosted_environment_leases_work_without_inline_execution(clie
     assert response.json()["stop"]["reason"] == "test stop"
 
 
+async def test_environment_work_update_only_accepts_metadata(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "metadata update"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 200, response.text
+    work = response.json()
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}",
+        headers=TEST_HEADERS,
+        json={"status": "completed"},
+    )
+    assert response.status_code == 422
+    assert "metadata" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}",
+        headers=TEST_HEADERS,
+        json={},
+    )
+    assert response.status_code == 422
+    assert "metadata" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}",
+        headers=TEST_HEADERS,
+        json={"metadata": None},
+    )
+    assert response.status_code == 422
+    assert "metadata" in response.json()["error"]["message"]
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}",
+        headers=TEST_HEADERS,
+        json={"metadata": {"phase": "queued", "drop": "soon"}},
+    )
+    assert response.status_code == 200, response.text
+    metadata = response.json()["metadata"]
+    assert metadata["phase"] == "queued"
+    assert metadata["drop"] == "soon"
+    assert response.json()["status"] == "leased"
+
+    response = await client.post(
+        f"/v1/environments/{environment['id']}/work/{work['id']}",
+        headers=TEST_HEADERS,
+        json={"metadata": {"drop": None}},
+    )
+    assert response.status_code == 200, response.text
+    metadata = response.json()["metadata"]
+    assert metadata["phase"] == "queued"
+    assert "drop" not in metadata
+
+
 async def test_expired_work_lease_can_be_recovered_by_next_worker(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client, "self_hosted")

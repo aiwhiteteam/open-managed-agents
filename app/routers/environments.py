@@ -235,10 +235,12 @@ async def update_environment_work(
     work = await _must_get_work(db, environment_id, work_id)
     data = dict(work.data)
     patch = body.model_dump(mode="json")
-    if "metadata" in patch:
-        data["metadata"] = merge_metadata(_string_metadata(data.get("metadata") or {}), patch.pop("metadata") or {})
-    data.update(patch)
-    await res_q.update_resource(db, work, data=data, status=data.get("status", work.status))
+    if set(patch) != {"metadata"}:
+        raise HTTPException(status_code=422, detail="work updates only support metadata")
+    if not isinstance(patch["metadata"], dict):
+        raise HTTPException(status_code=422, detail="work metadata must be an object")
+    data["metadata"] = merge_metadata(_string_metadata(data.get("metadata") or {}), patch["metadata"])
+    await res_q.update_resource(db, work, data=data, status=work.status)
     await db.commit()
     return _work_response(work)
 
