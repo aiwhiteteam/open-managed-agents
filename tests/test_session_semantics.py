@@ -105,6 +105,33 @@ async def test_custom_tool_requires_action_and_resumes_from_result(client):
     assert any("custom tool result" in str(event.get("content")) for event in events if event["type"] == "agent.message")
 
 
+async def test_client_cannot_set_input_event_processed_at(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={
+            "events": [
+                {
+                    "type": "system.message",
+                    "content": "context",
+                    "processed_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["processed_at"] is None
+
+    response = await client.get(f"/v1/sessions/{session['id']}/events", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    system_event = next(event for event in response.json()["data"] if event["type"] == "system.message")
+    assert system_event["processed_at"] is None
+
+
 async def test_tool_confirmation_requires_action_and_resumes(client):
     agent = await _create_agent(
         client,

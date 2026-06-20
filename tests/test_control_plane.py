@@ -216,6 +216,9 @@ async def test_session_pins_agent_version_and_processes_user_event(client):
         },
     )
     assert response.status_code == 200, response.text
+    sent_event = response.json()["data"][0]
+    assert sent_event["type"] == "user.message"
+    assert sent_event["processed_at"] is None
 
     for _ in range(20):
         response = await client.get(
@@ -234,6 +237,11 @@ async def test_session_pins_agent_version_and_processes_user_event(client):
     assert "user.message" in types
     assert "session.status_running" in types
     assert "agent.message" in types
+    by_type = {event["type"]: event for event in response.json()["data"]}
+    assert by_type["user.message"]["processed_at"] is None
+    assert by_type["session.status_idle"]["processed_at"] is not None
+    assert by_type["session.status_running"]["processed_at"] is not None
+    assert by_type["agent.message"]["processed_at"] is not None
 
 
 async def test_missing_beta_header_is_rejected(client):

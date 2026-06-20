@@ -73,7 +73,7 @@ def event_source(event_type: str) -> str:
 def _normalize_payload(event_type: str, payload: dict[str, Any] | None) -> dict[str, Any]:
     normalized = dict(payload or {})
     normalized.setdefault("type", event_type)
-    normalized.setdefault("processed_at", _default_processed_at(event_type))
+    normalized["processed_at"] = _default_processed_at(event_type)
     return normalized
 
 

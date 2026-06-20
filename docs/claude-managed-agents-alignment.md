@@ -59,7 +59,7 @@ Open Managed Agents should mirror the public shape while using OpenAI Agents SDK
 | Self-hosted sandbox | `self_hosted` environment acts as a work queue claimed by external workers. | Partial |
 | Session lifecycle | Session creation provisions the sandbox and starts `idle`; user/system events drive work. Valid states are `idle`, `running`, `rescheduling`, `terminated`. | Partial; core state guards implemented |
 | Session-local agent update | Session `agent.tools` and `agent.mcp_servers` can be fully replaced while idle without mutating agent versions. | Partial; SDK strict response contract verified, runtime semantics still partial |
-| Event protocol | User/system events are inputs; session/span/agent events are outputs; queued input events may have `processed_at = null`. | Partial |
+| Event protocol | User/system events are inputs; session/span/agent events are outputs; queued input events have `processed_at = null`; output events carry processed timestamps. | Partial; full event union mapping still TODO |
 | Custom tool continuation | `agent.custom_tool_use` pauses with `requires_action`; caller sends `user.custom_tool_result`. | Partial; MVP continuation contract implemented |
 | Tool confirmation | `agent.tool_use` or `agent.mcp_tool_use` may pause; caller sends `user.tool_confirmation`. | Partial; MVP continuation contract implemented |
 | File resources | Uploaded files can be mounted into sessions; session mounts create session-scoped file references; mounts are read-only copies. | Partial |

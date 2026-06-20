@@ -22,6 +22,7 @@ class SessionEventResponse(FlexibleApiModel):
     session_id: str
     seq: int
     created_at: datetime
+    processed_at: datetime | None = None
 
 
 class SendEventsResponse(ApiModel):
@@ -49,4 +50,3 @@ def event_to_sse(event: SessionEvent) -> str:
         f"event: {event.type}\n"
         f"data: {json.dumps(public, separators=(',', ':'))}\n\n"
     )
-
