@@ -12,6 +12,7 @@ from app.models.resources import resource_to_response
 
 
 MAX_SESSION_FILE_RESOURCES = 100
+MAX_SESSION_MEMORY_STORE_RESOURCES = 8
 
 
 async def create_session_resource(
@@ -23,6 +24,8 @@ async def create_session_resource(
 ):
     if isinstance(data, dict) and data.get("type") == "file":
         await _ensure_file_resource_capacity(db, session)
+    if isinstance(data, dict) and data.get("type") == "memory_store":
+        await _ensure_memory_store_resource_capacity(db, session)
     normalized = await normalize_session_resource_data(
         db,
         data,
@@ -51,6 +54,19 @@ async def _ensure_file_resource_capacity(db: AsyncSession, session) -> None:
     file_count = sum(1 for resource in resources if (resource.data or {}).get("type") == "file")
     if file_count >= MAX_SESSION_FILE_RESOURCES:
         raise HTTPException(status_code=422, detail="A session can have at most 100 file resources")
+
+
+async def _ensure_memory_store_resource_capacity(db: AsyncSession, session) -> None:
+    resources = await res_q.list_resources(
+        db,
+        resource_type="session_resource",
+        parent_id=session.id,
+        limit=1000,
+        workspace_id=session.workspace_id,
+    )
+    memory_store_count = sum(1 for resource in resources if (resource.data or {}).get("type") == "memory_store")
+    if memory_store_count >= MAX_SESSION_MEMORY_STORE_RESOURCES:
+        raise HTTPException(status_code=422, detail="A session can have at most 8 memory store resources")
 
 
 async def normalize_session_resource_data(
@@ -118,6 +134,11 @@ async def delete_session_resource_file(db: AsyncSession, resource) -> None:
         if active_references <= 1:
             await storage.delete_file(scoped_file.storage_key)
     await res_q.delete_resource(db, scoped_file)
+
+
+def ensure_session_resource_deletable(resource) -> None:
+    if (resource.data or {}).get("type") == "memory_store":
+        raise HTTPException(status_code=422, detail="memory_store session resources cannot be removed after creation")
 
 
 async def session_resources_response(db: AsyncSession, session) -> list[dict[str, Any]]:

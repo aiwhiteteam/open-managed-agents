@@ -36,6 +36,7 @@ from app.runtime.work_queue import enqueue_session_run, execute_work_item, shoul
 from app.session_resources import (
     create_session_resource,
     delete_session_resource_file,
+    ensure_session_resource_deletable,
     rotate_session_resource_token,
     session_has_memory_store,
     session_resource_response,
@@ -494,6 +495,7 @@ async def delete_session_resource(
     )
     if resource is None:
         raise HTTPException(status_code=404, detail="Session resource not found")
+    ensure_session_resource_deletable(resource)
     await delete_session_resource_file(db, resource)
     await res_q.delete_resource(db, resource)
     await db.commit()

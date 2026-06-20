@@ -75,7 +75,9 @@ Status legend:
 Session creation accepts the SDK resource union for `file`, `github_repository`, and `memory_store`.
 Resource responses are strict-SDK-compatible, including file mounts, memory-store snapshots, GitHub checkout shape, and GitHub token redaction.
 Runtime `resources.add` follows the SDK shape and only adds files; `resources.update` follows the SDK shape and only rotates GitHub repository tokens.
-Uploaded file mounts create new session-scoped file resources and object-storage copies, validate absolute mount paths, and enforce the official 100 file resources per session limit. Production filesystem mount semantics are still tracked in `TODO.md`.
+Uploaded file mounts create new session-scoped file resources and object-storage copies, validate absolute mount paths, and enforce the official 100 file resources per session limit.
+Memory-store session resources enforce the official 8 stores per session limit, can only be attached at session creation, and cannot be removed afterward.
+Production filesystem mount semantics are still tracked in `TODO.md`.
 
 | Operation | Route | Status |
 | --- | --- | --- |

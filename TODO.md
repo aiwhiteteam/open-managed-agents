@@ -14,7 +14,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Keep session-local agent update runtime semantics aligned with the SDK-validated request/response shape.
 - Preserve agent versioning semantics: agent updates require the current version, arrays replace wholesale, metadata merges/deletes intentionally, and delegated-agent rosters stay pinned rather than auto-updated.
 - Map the full event protocol, including `user.*`, `system.*`, `session.*`, `span.*`, and `agent.*` events. `processed_at = null` for queued user/system input events and non-null processed timestamps for output events have local coverage.
-- Keep uploaded-file session mounts creating session-scoped file resources and object-storage copies. Staged upload completion is workspace-scoped. The official 100 file resources per session limit is enforced locally. Session-produced files should still become session-scoped file references.
+- Keep uploaded-file session mounts creating session-scoped file resources and object-storage copies. Staged upload completion is workspace-scoped. The official 100 file resources per session limit is enforced locally. Memory-store session resources enforce the official 8 stores per session limit and cannot be added or removed after creation. Session-produced files should still become session-scoped file references.
 - Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
 - Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through validated workspace vault context. Runtime URL matching and non-terminal missing-auth session errors have local coverage; real MCP connection/OAuth refresh remains TODO.
 - Implement vault credential lifecycle: enrollment, refresh, runtime resolution, revocation, and webhook emission. Response redaction, archive/delete secret purge, and persisted validation metadata have local coverage.
@@ -76,7 +76,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Files And Resources
 
-- Add production malware scanning and object storage lifecycle policies. Direct file uploads, staged-upload completion, and skill uploads now pass through a local EICAR content-scan hook; file uploads also deduplicate by content hash within a workspace and keep shared objects until the last file reference is deleted. Session file mounts create session-scoped file resources and enforce the official 100 file resources per session limit.
+- Add production malware scanning and object storage lifecycle policies. Direct file uploads, staged-upload completion, and skill uploads now pass through a local EICAR content-scan hook; file uploads also deduplicate by content hash within a workspace and keep shared objects until the last file reference is deleted. Session file mounts create session-scoped file resources and enforce the official 100 file resources per session limit; memory-store session resources enforce the official 8 stores per session limit and are not removable after creation.
 - Implement production filesystem mount semantics for the SDK-validated session resource union. Uploaded file resources now create session-scoped file resources and object-storage copies.
 - Keep session resource union coverage current if Anthropic adds resource kinds beyond `file`, `github_repository`, and `memory_store`.
 
@@ -92,7 +92,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Extract Memory Store routes into typed request/response models instead of the current generic-resource compatibility layer.
 - Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. Memory content size, per-store count limits, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
 - Add semantic search/vector indexing if memories need retrieval beyond exact path and prefix lookup.
-- Keep mounted memory stores integrated into the runtime context builder. Full semantic/vector retrieval tools remain TODO.
+- Keep mounted memory stores integrated into the runtime context builder. Session creation enforces the official 8 mounted stores limit and rejects new attachments to archived stores. Full semantic/vector retrieval tools remain TODO.
 
 ## Deployments
 

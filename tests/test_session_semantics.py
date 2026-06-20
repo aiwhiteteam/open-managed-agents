@@ -474,6 +474,59 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     assert memory_context["memories"][0]["content"] == "ACME prefers email."
 
 
+async def test_memory_store_session_resource_limit_and_delete_guard(client):
+    stores = []
+    for index in range(9):
+        response = await client.post(
+            "/v1/memory_stores",
+            headers=TEST_HEADERS,
+            json={"name": f"Memory Store {index}"},
+        )
+        assert response.status_code == 201, response.text
+        stores.append(response.json())
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "resources": [
+                {"type": "memory_store", "memory_store_id": store["id"]}
+                for store in stores[:8]
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+    memory_resource = next(resource for resource in session["resources"] if resource["type"] == "memory_store")
+
+    response = await client.delete(
+        f"/v1/sessions/{session['id']}/resources/{memory_resource['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 422
+    assert "cannot be removed after creation" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": agent["id"], "version": 1},
+            "environment_id": environment["id"],
+            "resources": [
+                {"type": "memory_store", "memory_store_id": store["id"]}
+                for store in stores
+            ],
+        },
+    )
+    assert response.status_code == 422
+    assert "at most 8 memory store resources" in response.json()["error"]["message"]
+
+
 async def test_mcp_credentials_are_matched_from_session_vaults(client):
     mcp_server = {"type": "url", "name": "github", "url": "https://mcp.example.com/github"}
     agent = await _create_agent(
