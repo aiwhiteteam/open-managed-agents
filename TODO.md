@@ -17,7 +17,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Keep uploaded-file session mounts creating session-scoped object-storage copies. Session-produced files should still become session-scoped file references.
 - Implement permission policy semantics for built-in/MCP tools, including the boundary that custom tools are handled by the application continuation flow rather than normal permission policy enforcement.
 - Implement MCP connector auth semantics: agent definitions reference MCP servers, while sessions supply credentials through vault/profile context.
-- Implement vault credential lifecycle: enrollment, refresh, resolution, revocation/archive purge, secret redaction, and webhook emission.
+- Implement vault credential lifecycle: enrollment, refresh, runtime resolution, revocation, and webhook emission. Response redaction and archive/delete secret purge have local coverage.
 - Implement outcome/grader loops with separate grader context, max iterations, rubric inputs, and outcome evaluation events.
 - Implement multiagent thread semantics: shared sandbox/filesystem/vault context, but separate persistent thread/context/event stream per agent.
 - Implement webhook delivery semantics: event IDs, organization/workspace identifiers, signatures, freshness window, retries, idempotency, and failure disabling.
@@ -85,7 +85,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Store credentials in KMS/Vault instead of the generic resource table.
 - Implement OAuth enrollment and validation flows.
 - Implement credential refresh and webhook events.
-- Add secret redaction in logs.
+- Add secret redaction in logs. API responses redact credentials, and archive/delete purges persisted secret values in the MVP generic table.
 
 ## Memory Stores
 

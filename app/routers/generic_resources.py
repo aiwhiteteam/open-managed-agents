@@ -737,6 +737,8 @@ async def _archive(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    if resource_type == "credential":
+        await res_q.update_resource(db, resource, data=_purge_credential_secret_data(resource.data))
     await res_q.archive_resource(db, resource)
     await db.commit()
     return _resource_response(resource)
@@ -751,6 +753,8 @@ async def _delete(
     parent_id: str | None = None,
 ) -> dict[str, Any]:
     resource = await _must_exist(db, resource_id, resource_type, parent_id=parent_id)
+    if resource_type == "credential":
+        await res_q.update_resource(db, resource, data=_purge_credential_secret_data(resource.data))
     await res_q.delete_resource(db, resource)
     await db.commit()
     return deleted_response(resource, public_type=public_type)
@@ -916,6 +920,45 @@ def _credential_networking_response(value: Any) -> dict[str, Any]:
     if isinstance(value, dict) and value.get("type") == "limited":
         return {"type": "limited", "allowed_hosts": list(value.get("allowed_hosts") or [])}
     return {"type": "unrestricted"}
+
+
+PURGE_SECRET_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "password",
+    "private_key",
+    "refresh_token",
+    "secret_value",
+    "token",
+}
+
+
+def _purge_credential_secret_data(data: dict[str, Any] | None) -> dict[str, Any]:
+    purged = _purge_secret_values(data or {})
+    if isinstance(purged, dict):
+        purged["secrets_purged_at"] = utcnow().isoformat()
+    return purged if isinstance(purged, dict) else {}
+
+
+def _purge_secret_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, child in value.items():
+            if _should_purge_secret_key(key):
+                result[key] = None
+            else:
+                result[key] = _purge_secret_values(child)
+        return result
+    if isinstance(value, list):
+        return [_purge_secret_values(item) for item in value]
+    return value
+
+
+def _should_purge_secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return normalized in PURGE_SECRET_KEYS or normalized.endswith("_token") or normalized.endswith("_api_key")
 
 
 def _normalize_memory_store_data(data: dict[str, Any]) -> dict[str, Any]:

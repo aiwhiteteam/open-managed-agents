@@ -1,3 +1,5 @@
+from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from app.worker import run_worker
 from tests.conftest import TEST_HEADERS
 
@@ -61,3 +63,50 @@ async def test_vault_credential_response_redacts_secret_fields(client):
     assert credential["api_key"] == "redacted"
     assert credential["nested"]["access_token"] == "redacted"
     assert credential["nested"]["safe"] == "value"
+
+
+async def test_vault_credential_archive_purges_persisted_secret_values(client):
+    response = await client.post("/v1/vaults", headers=TEST_HEADERS, json={"name": "Main"})
+    assert response.status_code == 201, response.text
+    vault = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials",
+        headers=TEST_HEADERS,
+        json={
+            "display_name": "Linear",
+            "auth": {
+                "type": "mcp_oauth",
+                "mcp_server_url": "https://mcp.example.invalid",
+                "access_token": "secret-access-token",
+                "refresh": {"refresh_token": "secret-refresh-token", "safe": "keep"},
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    credential = response.json()
+
+    response = await client.post(
+        f"/v1/vaults/{vault['id']}/credentials/{credential['id']}/archive",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    archived = response.json()
+    assert archived["archived_at"] is not None
+    assert archived["auth"]["mcp_server_url"] == "https://mcp.example.invalid"
+
+    async with session_scope() as db:
+        stored = await res_q.get_resource(
+            db,
+            resource_id=credential["id"],
+            resource_type="credential",
+            parent_id=vault["id"],
+            include_deleted=True,
+        )
+
+    assert stored is not None
+    auth = stored.data["auth"]
+    assert auth["access_token"] is None
+    assert auth["refresh"]["refresh_token"] is None
+    assert auth["refresh"]["safe"] == "keep"
+    assert stored.data["secrets_purged_at"]
