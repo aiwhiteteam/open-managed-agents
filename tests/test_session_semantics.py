@@ -563,3 +563,50 @@ async def test_primary_session_thread_archive_is_persisted(client):
     response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
     assert response.json()["data"][0]["archived_at"] == archived_at
+
+
+async def test_multiagent_session_creates_delegated_agent_threads(client):
+    reviewer = await _create_agent(client)
+    response = await client.post(
+        "/v1/agents",
+        headers=TEST_HEADERS,
+        json={
+            "name": "Coordinator",
+            "model": {"id": "gpt-5.5"},
+            "multiagent": {
+                "type": "coordinator",
+                "agents": [{"type": "self"}, {"type": "agent", "id": reviewer["id"]}],
+            },
+        },
+    )
+    assert response.status_code == 201, response.text
+    coordinator = response.json()
+    environment = await _create_environment(client)
+
+    response = await client.post(
+        "/v1/sessions",
+        headers=TEST_HEADERS,
+        json={
+            "agent": {"type": "agent", "id": coordinator["id"], "version": coordinator["version"]},
+            "environment_id": environment["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    session = response.json()
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    threads = response.json()["data"]
+    assert len(threads) == 2
+    primary, delegated = threads
+    assert primary["agent"]["id"] == coordinator["id"]
+    assert delegated["parent_thread_id"] == primary["id"]
+    assert delegated["agent"]["id"] == reviewer["id"]
+    assert delegated["agent"]["version"] == reviewer["version"]
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/threads/{delegated['id']}/archive",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["archived_at"] is not None

@@ -87,6 +87,7 @@ async def create_session(
     )
     for resource_data in body.resources:
         await _create_session_resource(db, session, resource_data, allowed_types={"file", "github_repository", "memory_store"})
+    await _create_multiagent_session_threads(db, session, agent_version)
     await events_q.append_event(
         db,
         session,
@@ -1074,6 +1075,49 @@ async def _session_thread_response(db: AsyncSession, session, thread, *, archive
         "created_at": created_at,
         "updated_at": updated_at,
     }
+
+
+async def _create_multiagent_session_threads(db: AsyncSession, session, version) -> None:
+    multiagent = version.multiagent or {}
+    if not isinstance(multiagent, dict):
+        return
+    roster = multiagent.get("agents") or []
+    if not isinstance(roster, list):
+        return
+    primary_thread_id = _primary_thread_id(session)
+    for entry in roster:
+        if not isinstance(entry, dict) or entry.get("type") != "agent":
+            continue
+        agent_id = entry.get("id")
+        agent_version = entry.get("version")
+        if not agent_id or agent_version is None:
+            continue
+        referenced_version = await agents_q.get_agent_version(
+            db,
+            agent_id=str(agent_id),
+            version=int(agent_version),
+            workspace_id=session.workspace_id,
+        )
+        if referenced_version is None:
+            raise HTTPException(status_code=422, detail=f"Referenced multiagent version not found: {agent_id}@{agent_version}")
+        await res_q.create_resource(
+            db,
+            resource_type="session_thread",
+            parent_id=session.id,
+            name=f"agent:{agent_id}:{agent_version}",
+            status="idle",
+            data={
+                "status": "idle",
+                "parent_thread_id": primary_thread_id,
+                "agent": _session_thread_agent_snapshot(referenced_version),
+                "multiagent": {
+                    "type": "delegated_agent",
+                    "coordinator_agent_id": session.agent_id,
+                    "coordinator_agent_version": session.agent_version,
+                },
+            },
+            workspace_id=session.workspace_id,
+        )
 
 
 def _session_thread_agent_snapshot(version) -> dict[str, Any]:
