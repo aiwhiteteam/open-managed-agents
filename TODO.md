@@ -51,7 +51,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Add HTTP-level runtime integration tests with mocked OpenAI-compatible endpoints. Provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers.
 - Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
 - Keep session `rescheduling` behavior for transient failures covered, including retry windows and capped attempts. Durable retry execution still belongs to the production queue provider.
-- Expand session state-machine tests for worker crashes, queued continuation batches, and `user.interrupt`.
+- Expand session state-machine tests for worker crashes and queued continuation batches. `user.interrupt` single-event handling while active has local coverage.
 
 ## Open-Core Hosted Layer
 

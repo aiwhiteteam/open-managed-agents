@@ -231,6 +231,57 @@ async def test_running_session_blocks_mutations(client):
     assert response.status_code == 409
 
 
+async def test_user_interrupt_is_allowed_as_single_running_event(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    async with session_scope() as db:
+        db_session = await sessions_q.get_session(db, session["id"])
+        assert db_session is not None
+        await sessions_q.update_session(db, db_session, status="running", stop_reason={"type": "in_progress"})
+        await db.commit()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.interrupt"}]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["type"] == "user.interrupt"
+    assert response.json()["data"][0]["processed_at"] is None
+
+    response = await client.get(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    interrupted = response.json()
+    assert interrupted["status"] == "idle"
+    assert interrupted["stop_reason"] == {"type": "interrupted"}
+
+    events = await _wait_for_event_type(client, session["id"], "session.status_idle")
+    idle_event = [event for event in events if event["type"] == "session.status_idle"][-1]
+    assert idle_event["stop_reason"] == {"type": "interrupted"}
+
+
+async def test_user_interrupt_must_be_single_event_while_running(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    async with session_scope() as db:
+        db_session = await sessions_q.get_session(db, session["id"])
+        assert db_session is not None
+        await sessions_q.update_session(db, db_session, status="running", stop_reason={"type": "in_progress"})
+        await db.commit()
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.interrupt"}, {"type": "user.message", "content": "new work"}]},
+    )
+    assert response.status_code == 409
+    assert "Cannot send events while session is running" in response.json()["error"]["message"]
+
+
 async def test_session_local_agent_update_does_not_mutate_agent_version(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)
