@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import zipfile
+from time import time_ns
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -33,6 +34,7 @@ router = APIRouter(
 @router.post("", status_code=201)
 async def create_skill(request: Request, db: AsyncSession = Depends(get_session)):
     data, content = await _skill_payload_from_request(request)
+    version_number = _new_skill_version_id()
     skill = await res_q.create_resource(
         db,
         resource_type="skill",
@@ -42,10 +44,10 @@ async def create_skill(request: Request, db: AsyncSession = Depends(get_session)
             "name": data.get("name"),
             "description": data.get("description"),
             "top_level_directory": data.get("top_level_directory"),
-            "latest_version": 1,
+            "latest_version": version_number,
         },
     )
-    version = await _create_skill_version_resource(db, skill.id, 1, data, content)
+    version = await _create_skill_version_resource(db, skill.id, version_number, data, content)
     await db.commit()
     response = _skill_response(skill)
     response["version"] = _skill_version_response(version)
@@ -95,7 +97,7 @@ async def create_skill_version(
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
     data, content = await _skill_payload_from_request(request)
-    version_number = await res_q.next_version(db, resource_type="skill_version", parent_id=skill.id)
+    version_number = _new_skill_version_id(skill.data.get("latest_version"))
     version = await _create_skill_version_resource(db, skill.id, version_number, data, content)
     skill_data = dict(skill.data)
     skill_data["latest_version"] = version_number
@@ -312,6 +314,15 @@ def _enforce_skill_archive_size(content: bytes) -> None:
             status_code=413,
             detail=f"Skill archive exceeds maximum size of {max_bytes} bytes",
         )
+
+
+def _new_skill_version_id(previous: Any = None) -> int:
+    candidate = time_ns() // 1_000
+    try:
+        previous_version = int(previous or 0)
+    except (TypeError, ValueError):
+        previous_version = 0
+    return max(candidate, previous_version + 1)
 
 
 def _normalize_zip_path(filename: str) -> str:

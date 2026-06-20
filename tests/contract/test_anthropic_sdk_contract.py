@@ -16,6 +16,13 @@ MANAGED_AGENTS_BETA = "managed-agents-2026-04-01"
 BETA_KWARG = {"betas": [MANAGED_AGENTS_BETA]}
 
 
+def assert_epoch_microsecond_version(value: str | None) -> int:
+    assert value is not None
+    assert value.isdigit()
+    assert len(value) >= 16
+    return int(value)
+
+
 @asynccontextmanager
 async def anthropic_client():
     from app.main import app
@@ -419,10 +426,11 @@ async def test_anthropic_sdk_skills_contract():
 
         assert skill.type == "skill"
         assert skill.source == "custom"
-        assert skill.latest_version == "1"
+        first_version = assert_epoch_microsecond_version(skill.latest_version)
 
         retrieved = await client.beta.skills.retrieve(skill.id, **BETA_KWARG)
         assert retrieved.id == skill.id
+        assert retrieved.latest_version == skill.latest_version
 
         listed = [item async for item in client.beta.skills.list(limit=20, **BETA_KWARG)]
         assert any(item.id == skill.id for item in listed)
@@ -440,7 +448,7 @@ async def test_anthropic_sdk_skills_contract():
         )
         assert version.type == "skill_version"
         assert version.skill_id == skill.id
-        assert version.version == "2"
+        assert assert_epoch_microsecond_version(version.version) > first_version
         assert version.directory == "skill"
 
         retrieved_version = await client.beta.skills.versions.retrieve(

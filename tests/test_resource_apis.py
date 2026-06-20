@@ -72,7 +72,9 @@ async def test_skill_create_version_and_download(client):
     assert response.status_code == 201, response.text
     skill = response.json()
     assert skill["type"] == "skill"
-    assert skill["latest_version"] == "1"
+    first_version = skill["latest_version"]
+    assert first_version.isdigit()
+    assert len(first_version) >= 16
 
     response = await client.post(
         f"/v1/skills/{skill['id']}/versions",
@@ -86,9 +88,11 @@ async def test_skill_create_version_and_download(client):
         },
     )
     assert response.status_code == 201, response.text
-    assert response.json()["version"] == "2"
+    second_version = response.json()["version"]
+    assert second_version.isdigit()
+    assert int(second_version) > int(first_version)
 
-    response = await client.get(f"/v1/skills/{skill['id']}/versions/2/content", headers=TEST_HEADERS)
+    response = await client.get(f"/v1/skills/{skill['id']}/versions/{second_version}/content", headers=TEST_HEADERS)
     assert response.status_code == 200
     assert b"Updated" in response.content
 
