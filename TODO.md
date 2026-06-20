@@ -65,7 +65,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 - Map `cloud` environments to a real production sandbox provider.
 - Map `self_hosted` environments to a real worker queue.
-- Add external worker token auth and production retry execution. Lease ownership enforcement, automatic expired-lease recovery, and retry-at backoff gates have local coverage.
+- Add production retry execution and hosted worker identity/RBAC. Optional shared worker-token auth, lease ownership enforcement, automatic expired-lease recovery, and retry-at backoff gates have local coverage.
 - Enforce network policies, package installation controls, and sandbox resource limits.
 
 ## Skills

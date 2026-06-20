@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import secrets
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
+from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import environments as env_q
 from app.db.queries import resources as res_q
@@ -110,11 +113,21 @@ async def delete_environment(
     return {"id": environment.id, "type": "environment_deleted", "deleted": True}
 
 
+async def require_worker_access(x_worker_token: str | None = Header(default=None, alias="x-worker-token")) -> None:
+    expected = get_settings().oma_worker_token
+    if not expected:
+        return None
+    if not x_worker_token or not secrets.compare_digest(x_worker_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid worker token")
+    return None
+
+
 @router.get("/{environment_id}/work")
 async def list_environment_work(
     environment_id: str,
     limit: int = 50,
     page: str | None = None,
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -132,6 +145,7 @@ async def poll_environment_work(
     environment_id: str,
     worker_id: str = Query(default="anonymous"),
     lease_seconds: int = Query(default=60, ge=5, le=3600),
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -150,6 +164,7 @@ async def poll_environment_work(
 @router.get("/{environment_id}/work/stats")
 async def environment_work_stats(
     environment_id: str,
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -176,6 +191,7 @@ async def environment_work_stats(
 async def retrieve_environment_work(
     environment_id: str,
     work_id: str,
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -188,6 +204,7 @@ async def update_environment_work(
     environment_id: str,
     work_id: str,
     body: GenericBody,
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -204,6 +221,7 @@ async def ack_environment_work(
     environment_id: str,
     work_id: str,
     worker_id: str | None = Query(default=None),
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -223,6 +241,7 @@ async def heartbeat_environment_work(
     body: GenericBody,
     worker_id: str | None = Query(default=None),
     lease_seconds: int = Query(default=60, ge=5, le=3600),
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)
@@ -246,6 +265,7 @@ async def stop_environment_work(
     environment_id: str,
     work_id: str,
     body: GenericBody,
+    _worker: None = Depends(require_worker_access),
     db: AsyncSession = Depends(get_session),
 ):
     await _must_get_environment(db, environment_id)

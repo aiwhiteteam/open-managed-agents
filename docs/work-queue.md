@@ -14,11 +14,12 @@ This queue is visible state for session execution. It does not mean local develo
 - `POST /work/{work_id}/ack` marks it running.
 - `POST /work/{work_id}/heartbeat` records progress and extends the lease.
 - `ack` and `heartbeat` require the caller's `worker_id` to match the current lease owner.
+- When `OMA_WORKER_TOKEN` is set, all work routes also require `x-worker-token`.
 - Expired `leased` or `running` work can be recovered by a later poll from another worker.
 - Transient runtime failures can mark work `rescheduling`; polling respects `retry_at` before leasing it again.
 - `POST /work/{work_id}/stop` marks it stopped.
 
-This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with stronger fencing locks, durable retry execution, and worker token authentication when long-running async execution is required.
+This makes pending work visible in Postgres, but it is not yet equivalent to a production queue. Production should move inline execution to Cloud Tasks, Pub/Sub, or a dedicated worker service with stronger fencing locks, durable retry execution, and worker identity/RBAC when long-running async execution is required.
 
 ## Optional Self-Hosted Worker
 
@@ -29,3 +30,9 @@ oma-worker --poll-interval 1
 ```
 
 Use `--environment-id env_...` to constrain the worker to one environment, or `--once` for one-shot execution in tests and maintenance jobs.
+
+If `OMA_WORKER_TOKEN` is configured, direct HTTP workers must send:
+
+```text
+x-worker-token: ...
+```

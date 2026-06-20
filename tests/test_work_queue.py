@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+from app.config import get_settings
 from app.db.engine import session_scope
 from app.db.queries import resources as res_q
 from tests.conftest import TEST_HEADERS
@@ -236,3 +237,41 @@ async def test_rescheduled_work_is_not_leased_until_retry_at(client):
     assert leased["id"] == work_id
     assert leased["status"] == "leased"
     assert leased["lease"]["worker_id"] == "worker-2"
+
+
+async def test_worker_token_is_required_when_configured(client, monkeypatch):
+    monkeypatch.setenv("OMA_WORKER_TOKEN", "worker-secret")
+    get_settings.cache_clear()
+
+    agent = await _create_agent(client)
+    environment = await _create_environment(client, "self_hosted")
+    session = await _create_session(client, agent, environment)
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/events",
+        headers=TEST_HEADERS,
+        json={"events": [{"type": "user.message", "content": "secure lease"}]},
+    )
+    assert response.status_code == 200, response.text
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers=TEST_HEADERS,
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 401
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers={**TEST_HEADERS, "x-worker-token": "wrong"},
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 401
+
+    response = await client.get(
+        f"/v1/environments/{environment['id']}/work/poll",
+        headers={**TEST_HEADERS, "x-worker-token": "worker-secret"},
+        params={"worker_id": "worker-1", "lease_seconds": 30},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "leased"
