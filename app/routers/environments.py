@@ -36,13 +36,14 @@ async def create_environment(
     body: EnvironmentCreateRequest,
     db: AsyncSession = Depends(get_session),
 ):
+    name = _normalize_environment_name(body.name)
     try:
         config = environment_config_with_scope(body.config, body.scope)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     environment = await env_q.create_environment(
         db,
-        name=body.name,
+        name=name,
         config=config,
         description=body.description,
         metadata=normalize_metadata(body.metadata),
@@ -84,6 +85,7 @@ async def update_environment(
     environment = await env_q.get_environment(db, environment_id)
     if environment is None or environment.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Environment not found")
+    name = _normalize_environment_name(body.name) if body.name is not None else None
     config = body.config
     try:
         if body.scope is not None:
@@ -95,13 +97,19 @@ async def update_environment(
     environment = await env_q.update_environment(
         db,
         environment,
-        name=body.name,
+        name=name,
         config=config,
         description=body.description,
         metadata=merge_metadata(environment.metadata_, body.metadata) if body.metadata is not None else None,
     )
     await db.commit()
     return environment_to_response(environment)
+
+
+def _normalize_environment_name(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise HTTPException(status_code=422, detail="environment name must be a non-empty string")
+    return value.strip()
 
 
 @router.post("/{environment_id}/archive", response_model=EnvironmentResponse)

@@ -10,13 +10,14 @@ from app.models.common import ApiModel
 class EnvironmentCreateRequest(ApiModel):
     name: str
     description: str | None = None
-    config: dict[str, Any] = Field(default_factory=lambda: {"type": "cloud"})
+    config: dict[str, Any] | None = Field(default_factory=lambda: {"type": "cloud"})
     metadata: dict[str, Any] = Field(default_factory=dict)
     scope: Literal["organization", "account"] | None = None
 
     @model_validator(mode="after")
     def validate_config(self):
-        validate_environment_config(self.config)
+        if self.config is not None:
+            validate_environment_config(self.config)
         return self
 
 

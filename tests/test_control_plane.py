@@ -470,6 +470,41 @@ async def test_agent_mcp_servers_must_match_mcp_toolsets(client):
     assert response.status_code == 201, response.text
 
 
+async def test_environment_name_and_null_config_contract(client):
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": "   ", "config": {"type": "cloud"}},
+    )
+    assert response.status_code == 422
+    assert "non-empty" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/environments",
+        headers=TEST_HEADERS,
+        json={"name": " Nullable Config ", "config": None},
+    )
+    assert response.status_code == 201, response.text
+    environment = response.json()
+    assert environment["name"] == "Nullable Config"
+    assert environment["config"]["type"] == "cloud"
+
+    response = await client.patch(
+        f"/v1/environments/{environment['id']}",
+        headers=TEST_HEADERS,
+        json={"config": None},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["config"]["type"] == "cloud"
+
+    response = await client.patch(
+        f"/v1/environments/{environment['id']}",
+        headers=TEST_HEADERS,
+        json={"name": ""},
+    )
+    assert response.status_code == 422
+
+
 async def test_session_pins_agent_version_and_processes_user_event(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)
