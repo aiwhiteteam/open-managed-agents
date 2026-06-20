@@ -21,6 +21,7 @@ PREFIXES = {
     "deployment": "deploy",
     "deployment_run": "deprun",
     "user_profile": "uprof",
+    "user_profile_enrollment": "upenroll",
     "session_resource": "sesrsc",
     "session_thread": "thread",
     "environment_work": "work",

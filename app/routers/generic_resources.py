@@ -1,4 +1,5 @@
 import hashlib
+import secrets
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_api_access
+from app.config import get_settings
 from app.db.engine import get_session
 from app.db.queries import agents as agents_q
 from app.db.queries import environments as env_q
@@ -595,10 +597,28 @@ async def update_user_profile(user_profile_id: str, body: GenericBody, db: Async
 @router.post("/v1/user_profiles/{user_profile_id}/enrollment_url")
 async def create_user_profile_enrollment_url(user_profile_id: str, db: AsyncSession = Depends(get_session)):
     profile = await _must_exist(db, user_profile_id, "user_profile")
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = utcnow() + timedelta(hours=1)
+    base_url = get_settings().oma_public_base_url.rstrip("/")
+    await res_q.create_resource(
+        db,
+        resource_type="user_profile_enrollment",
+        parent_id=profile.id,
+        name=token_hash[:16],
+        status="active",
+        data={
+            "user_profile_id": profile.id,
+            "token_hash": token_hash,
+            "expires_at": expires_at.isoformat(),
+            "url_base": base_url,
+        },
+    )
+    await db.commit()
     return {
         "type": "enrollment_url",
-        "url": f"https://example.invalid/managed-agents/user-profiles/{profile.id}/enroll",
-        "expires_at": utcnow() + timedelta(hours=1),
+        "url": f"{base_url}/managed-agents/user-profiles/{profile.id}/enroll?token={token}",
+        "expires_at": expires_at,
     }
 
 

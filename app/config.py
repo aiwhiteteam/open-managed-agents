@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     oma_max_file_upload_bytes: int = 50 * 1024 * 1024
     oma_max_skill_archive_bytes: int = 25 * 1024 * 1024
     oma_openai_compatible_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
+    oma_public_base_url: str = "https://example.invalid"
 
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""

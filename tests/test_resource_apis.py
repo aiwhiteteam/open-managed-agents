@@ -1,3 +1,7 @@
+from urllib.parse import parse_qs, urlparse
+
+from app.db.engine import session_scope
+from app.db.queries import resources as res_q
 from tests.conftest import TEST_HEADERS
 from app.config import get_settings
 
@@ -146,3 +150,38 @@ async def test_vault_credentials_memory_and_deployment_metadata(client):
     response = await client.post(f"/v1/deployments/{deployment['id']}/run", headers=TEST_HEADERS)
     assert response.status_code == 200, response.text
     assert response.json()["type"] == "deployment_run"
+
+
+async def test_user_profile_enrollment_url_persists_hashed_token(client):
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=TEST_HEADERS,
+        json={"relationship": "external", "external_id": "user-enroll"},
+    )
+    assert response.status_code == 201, response.text
+    profile = response.json()
+
+    response = await client.post(f"/v1/user_profiles/{profile['id']}/enrollment_url", headers=TEST_HEADERS)
+
+    assert response.status_code == 200, response.text
+    enrollment = response.json()
+    assert enrollment["type"] == "enrollment_url"
+    parsed = urlparse(enrollment["url"])
+    token = parse_qs(parsed.query)["token"][0]
+    assert parsed.path == f"/managed-agents/user-profiles/{profile['id']}/enroll"
+    assert token
+    assert enrollment["expires_at"]
+
+    async with session_scope() as db:
+        resources = await res_q.list_resources(
+            db,
+            resource_type="user_profile_enrollment",
+            parent_id=profile["id"],
+            limit=10,
+        )
+
+    assert len(resources) == 1
+    stored = resources[0].data
+    assert stored["user_profile_id"] == profile["id"]
+    assert stored["token_hash"]
+    assert token not in str(stored)

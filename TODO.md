@@ -102,7 +102,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## User Profiles
 
-- Implement real enrollment URLs, identity binding, and trust grants.
+- Implement identity binding and trust grants. Enrollment URL tokens are generated, hashed, persisted, and expired locally; hosted delivery/verification remains TODO.
 - Enforce access policy between user profiles, vaults, and sessions.
 
 ## Webhooks
