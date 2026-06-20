@@ -70,8 +70,8 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Skills
 
+- Keep skill multipart upload compatibility covered through the official Anthropic SDK. The SDK sends `display_title` plus multipart `files` arrays to `/v1/skills?beta=true` and multipart `files` arrays to `/v1/skills/{skill_id}/versions?beta=true`; the strict contract test covers both create paths.
 - Keep skill archive download shape covered. Zip response content-type, attachment header, and archive file paths are locally tested; official SDK binary download remains covered in contract tests.
-- Implement exact SDK multipart field compatibility for `files`.
 - Replace MVP sequential skill version strings (`"1"`, `"2"`) with official-compatible version identifiers and lifecycle semantics.
 
 ## Files And Resources
