@@ -206,29 +206,33 @@ async def test_tool_confirmation_requires_action_and_resumes(client):
     assert any("tool confirmation" in str(event.get("content")) for event in events if event["type"] == "agent.message")
 
 
-async def test_running_session_blocks_mutations(client):
+async def test_active_session_states_block_mutations(client):
     agent = await _create_agent(client)
     environment = await _create_environment(client)
-    session = await _create_session(client, agent, environment)
+    sessions = {
+        "running": await _create_session(client, agent, environment),
+        "rescheduling": await _create_session(client, agent, environment),
+    }
 
-    async with session_scope() as db:
-        db_session = await sessions_q.get_session(db, session["id"])
-        assert db_session is not None
-        await sessions_q.update_session(db, db_session, status="running", stop_reason={"type": "in_progress"})
-        await db.commit()
+    for status, session in sessions.items():
+        async with session_scope() as db:
+            db_session = await sessions_q.get_session(db, session["id"])
+            assert db_session is not None
+            await sessions_q.update_session(db, db_session, status=status, stop_reason={"type": "in_progress"})
+            await db.commit()
 
-    response = await client.patch(
-        f"/v1/sessions/{session['id']}",
-        headers=TEST_HEADERS,
-        json={"title": "blocked"},
-    )
-    assert response.status_code == 409
+        response = await client.patch(
+            f"/v1/sessions/{session['id']}",
+            headers=TEST_HEADERS,
+            json={"title": "blocked"},
+        )
+        assert response.status_code == 409
 
-    response = await client.post(f"/v1/sessions/{session['id']}/archive", headers=TEST_HEADERS)
-    assert response.status_code == 409
+        response = await client.post(f"/v1/sessions/{session['id']}/archive", headers=TEST_HEADERS)
+        assert response.status_code == 409
 
-    response = await client.delete(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
-    assert response.status_code == 409
+        response = await client.delete(f"/v1/sessions/{session['id']}", headers=TEST_HEADERS)
+        assert response.status_code == 409
 
 
 async def test_user_interrupt_is_allowed_as_single_running_event(client):
