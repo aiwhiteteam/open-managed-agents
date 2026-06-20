@@ -1,6 +1,7 @@
 import hashlib
 import json
 import secrets
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,6 +35,7 @@ RESOURCE_CONFIG = {
 
 MAX_MEMORIES_PER_STORE = 2000
 MAX_MEMORY_CONTENT_BYTES = 100 * 1024
+MAX_MEMORY_PATH_BYTES = 1024
 
 
 @router.post("/v1/vaults", status_code=201)
@@ -246,7 +248,7 @@ async def list_memories(
         memory = await _find_memory_by_path(db, memory_store_id, path_key)
         resources = [memory] if memory is not None else []
     elif path_prefix is not None:
-        prefix = _path_key(_normalize_memory_path(path_prefix))
+        prefix = _path_key(_normalize_memory_path_prefix(path_prefix))
         resources = await res_q.list_resources_by_name_prefix(
             db,
             resource_type="memory",
@@ -257,7 +259,7 @@ async def list_memories(
     else:
         resources = await res_q.list_resources(db, resource_type="memory", parent_id=memory_store_id, limit=1000)
     if path is not None and path_prefix is not None:
-        prefix = _path_key(_normalize_memory_path(path_prefix))
+        prefix = _path_key(_normalize_memory_path_prefix(path_prefix))
         resources = [
             memory
             for memory in resources
@@ -1230,7 +1232,9 @@ def _normalize_memory_path(value: Any) -> str:
     if value is None:
         raise HTTPException(status_code=422, detail="Memory path is required")
     if isinstance(value, str):
-        parts = [part.strip() for part in value.replace("\\", "/").split("/") if part.strip()]
+        text = value.strip()
+        _validate_memory_path_text(text)
+        parts = text.removeprefix("/").split("/")
     elif isinstance(value, list):
         parts = [str(part).strip() for part in value if str(part).strip()]
     else:
@@ -1239,7 +1243,38 @@ def _normalize_memory_path(value: Any) -> str:
         raise HTTPException(status_code=422, detail="Memory path cannot be empty")
     if any("/" in part for part in parts):
         raise HTTPException(status_code=422, detail="Memory path array items cannot contain '/'")
-    return "/" + "/".join(parts)
+    path = "/" + "/".join(parts)
+    _validate_memory_path_text(path)
+    return path
+
+
+def _normalize_memory_path_prefix(value: str) -> str:
+    text = str(value or "").strip()
+    if text != "/" and text.endswith("/"):
+        text = text.rstrip("/")
+    return _normalize_memory_path(text)
+
+
+def _validate_memory_path_text(path: str) -> None:
+    if not path.startswith("/"):
+        raise HTTPException(status_code=422, detail="Memory path must start with '/'")
+    if len(path.encode("utf-8")) > MAX_MEMORY_PATH_BYTES:
+        raise HTTPException(status_code=422, detail="Memory path must be at most 1024 bytes")
+    if unicodedata.normalize("NFC", path) != path:
+        raise HTTPException(status_code=422, detail="Memory path must be NFC-normalized")
+    parts = path.split("/")
+    if len(parts) == 1 or parts[1:] == [""]:
+        raise HTTPException(status_code=422, detail="Memory path cannot be empty")
+    if any(part == "" for part in parts[1:]):
+        raise HTTPException(status_code=422, detail="Memory path must not contain empty segments")
+    if any(part in {".", ".."} for part in parts[1:]):
+        raise HTTPException(status_code=422, detail="Memory path must not contain '.' or '..' segments")
+    if any(_has_control_or_format_characters(part) for part in parts[1:]):
+        raise HTTPException(status_code=422, detail="Memory path must not contain control or format characters")
+
+
+def _has_control_or_format_characters(value: str) -> bool:
+    return any(unicodedata.category(char) in {"Cc", "Cf"} for char in value)
 
 
 def _path_key(path: str) -> str:

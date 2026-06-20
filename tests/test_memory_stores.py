@@ -40,14 +40,14 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "duplicate"},
+        json={"path": "/customers/acme", "content": "duplicate"},
     )
     assert response.status_code == 409
 
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories/by_path",
         headers=TEST_HEADERS,
-        params={"path": "customers/acme"},
+        params={"path": "/customers/acme"},
     )
     assert response.status_code == 200, response.text
     assert response.json()["id"] == memory["id"]
@@ -78,7 +78,7 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
         headers=TEST_HEADERS,
         json={
             "if_version": 2,
-            "path": "customers/acme-renamed",
+            "path": "/customers/acme-renamed",
             "content": "ACME renamed path.",
             "actor": "operator",
         },
@@ -92,14 +92,14 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories/by_path",
         headers=TEST_HEADERS,
-        params={"path": "customers/acme"},
+        params={"path": "/customers/acme"},
     )
     assert response.status_code == 404
 
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories/by_path",
         headers=TEST_HEADERS,
-        params={"path": "customers/acme-renamed"},
+        params={"path": "/customers/acme-renamed"},
     )
     assert response.status_code == 200, response.text
     assert response.json()["id"] == memory["id"]
@@ -113,6 +113,27 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     assert [version["version"] for version in versions] == [3, 2, 1]
     assert versions[0]["actor"] == "operator"
     assert versions[0]["operation"] == "modified"
+
+
+async def test_memory_path_validation_matches_sdk_contract(client):
+    store = await _create_store(client)
+    invalid_paths = {
+        "customers/acme": "must start with",
+        "/customers//acme": "empty segments",
+        "/customers/./acme": "must not contain",
+        "/" + ("x" * 1024): "at most 1024 bytes",
+        "/cafe\u0301": "NFC-normalized",
+        "/customers/\u200b": "control or format",
+    }
+
+    for path, message in invalid_paths.items():
+        response = await client.post(
+            f"/v1/memory_stores/{store['id']}/memories",
+            headers=TEST_HEADERS,
+            json={"path": path, "content": "invalid"},
+        )
+        assert response.status_code == 422, f"{path}: {response.text}"
+        assert message in response.json()["error"]["message"]
 
 
 async def test_memory_path_prefix_query_is_not_capped_before_filtering(client):
@@ -131,7 +152,7 @@ async def test_memory_path_prefix_query_is_not_capped_before_filtering(client):
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        params={"path_prefix": "customers", "limit": 10},
+        params={"path_prefix": "/customers", "limit": 10},
     )
 
     assert response.status_code == 200, response.text
@@ -143,7 +164,7 @@ async def test_memory_version_redaction_removes_snapshot_content(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "secret preference"},
+        json={"path": "/customers/acme", "content": "secret preference"},
     )
     assert response.status_code == 201, response.text
     memory = response.json()
@@ -192,7 +213,7 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "delete me"},
+        json={"path": "/customers/acme", "content": "delete me"},
     )
     assert response.status_code == 201, response.text
     memory = response.json()
@@ -227,7 +248,7 @@ async def test_memory_version_list_filters_api_key_session_and_view(client):
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
         json={
-            "path": "customers/acme",
+            "path": "/customers/acme",
             "content": "created by key a",
             "actor": "key-a",
             "session_id": "sess_a",
@@ -284,7 +305,7 @@ async def test_memory_store_write_limits(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "too-large", "content": "x" * (100 * 1024 + 1)},
+        json={"path": "/too-large", "content": "x" * (100 * 1024 + 1)},
     )
     assert response.status_code == 413
 
@@ -299,7 +320,7 @@ async def test_memory_store_write_limits(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "overflow", "content": "overflow"},
+        json={"path": "/overflow", "content": "overflow"},
     )
     assert response.status_code == 409
 
@@ -309,7 +330,7 @@ async def test_archived_memory_store_is_read_only_and_not_attachable(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "read only"},
+        json={"path": "/customers/acme", "content": "read only"},
     )
     assert response.status_code == 201, response.text
     memory = response.json()
@@ -326,7 +347,7 @@ async def test_archived_memory_store_is_read_only_and_not_attachable(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/new", "content": "blocked"},
+        json={"path": "/customers/new", "content": "blocked"},
     )
     assert response.status_code == 409
 
@@ -365,7 +386,7 @@ async def test_memory_version_retrieve_requires_matching_store(client):
     response = await client.post(
         f"/v1/memory_stores/{store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "store scoped"},
+        json={"path": "/customers/acme", "content": "store scoped"},
     )
     assert response.status_code == 201, response.text
     memory = response.json()

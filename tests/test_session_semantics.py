@@ -429,7 +429,7 @@ async def test_memory_store_session_resource_is_added_to_runtime_context(client)
     response = await client.post(
         f"/v1/memory_stores/{memory_store['id']}/memories",
         headers=TEST_HEADERS,
-        json={"path": "customers/acme", "content": "ACME prefers email."},
+        json={"path": "/customers/acme", "content": "ACME prefers email."},
     )
     assert response.status_code == 201, response.text
 
