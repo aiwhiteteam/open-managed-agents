@@ -238,3 +238,33 @@ async def test_file_session_resource_creates_session_scoped_copy(client):
     assert stored["source_file_id"] == file["id"]
     assert stored["filename"] == "notes.txt"
     assert stored["storage"]["key"].startswith(f"workspaces/wrkspc_default/sessions_{session['id']}/resources/")
+
+
+async def test_primary_session_thread_archive_is_persisted(client):
+    agent = await _create_agent(client)
+    environment = await _create_environment(client)
+    session = await _create_session(client, agent, environment)
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    primary_thread = response.json()["data"][0]
+    assert primary_thread["archived_at"] is None
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/threads/{primary_thread['id']}/archive",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    archived_at = response.json()["archived_at"]
+    assert archived_at is not None
+
+    response = await client.get(
+        f"/v1/sessions/{session['id']}/threads/{primary_thread['id']}",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["archived_at"] == archived_at
+
+    response = await client.get(f"/v1/sessions/{session['id']}/threads", headers=TEST_HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["archived_at"] == archived_at

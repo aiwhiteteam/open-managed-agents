@@ -514,7 +514,11 @@ async def archive_session_thread(
 ):
     session = await _must_get_session(db, session_id)
     if thread_id == _primary_thread_id(session):
-        return await _session_thread_response(db, session, None, archived=True)
+        details = dict(session.status_details or {})
+        details["primary_thread_archived_at"] = datetime.now(timezone.utc).isoformat()
+        await sessions_q.update_session(db, session, status_details=details)
+        await db.commit()
+        return await _session_thread_response(db, session, None)
     thread = await res_q.get_resource(
         db,
         resource_id=thread_id,
@@ -1027,6 +1031,8 @@ async def _session_thread_response(db: AsyncSession, session, thread, *, archive
     created_at = getattr(thread, "created_at", session.created_at)
     updated_at = getattr(thread, "updated_at", session.updated_at)
     archived_at = getattr(thread, "archived_at", None)
+    if thread is None:
+        archived_at = (session.status_details or {}).get("primary_thread_archived_at") or archived_at
     if archived and archived_at is None:
         archived_at = datetime.now(timezone.utc)
     status = data.get("status") or session.status

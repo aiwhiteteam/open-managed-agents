@@ -89,11 +89,11 @@ Uploaded file mounts create session-scoped object-storage copies. Production fil
 
 | Operation | Route | Status |
 | --- | --- | --- |
-| retrieve | `GET /v1/sessions/{session_id}/threads/{thread_id}` | stub |
-| list | `GET /v1/sessions/{session_id}/threads` | stub |
-| archive | `POST /v1/sessions/{session_id}/threads/{thread_id}/archive` | stub |
-| list events | `GET /v1/sessions/{session_id}/threads/{thread_id}/events` | stub |
-| stream events | `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` | stub |
+| retrieve | `GET /v1/sessions/{session_id}/threads/{thread_id}` | partial |
+| list | `GET /v1/sessions/{session_id}/threads` | partial |
+| archive | `POST /v1/sessions/{session_id}/threads/{thread_id}/archive` | partial |
+| list events | `GET /v1/sessions/{session_id}/threads/{thread_id}/events` | partial |
+| stream events | `GET /v1/sessions/{session_id}/threads/{thread_id}/stream` | partial |
 
 ## Deployments
 
