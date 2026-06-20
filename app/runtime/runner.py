@@ -1366,7 +1366,7 @@ def _map_openai_stream_event(event) -> dict[str, Any] | None:
             "content": [{"type": "json", "json": {"event": "handoff_requested", "item": _raw_item_summary(raw_item)}}],
             "source": "openai_agents_sdk",
         }
-    if name == "handoff_occured":
+    if name in {"handoff_occured", "handoff_occurred"}:
         return {
             "type": "agent.thinking",
             "content": [{"type": "json", "json": {"event": "handoff_occurred", "item": _raw_item_summary(raw_item)}}],

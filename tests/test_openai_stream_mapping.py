@@ -125,6 +125,18 @@ def test_openai_handoff_maps_to_thinking_metadata():
     assert mapped["content"][0]["json"]["event"] == "handoff_requested"
 
 
+def test_openai_handoff_occurred_accepts_corrected_spelling():
+    event = _run_item_event(
+        "handoff_occurred",
+        {"type": "handoff", "target_agent": "Writer"},
+    )
+
+    mapped = _map_openai_stream_event(event)
+
+    assert mapped["type"] == "agent.thinking"
+    assert mapped["content"][0]["json"]["event"] == "handoff_occurred"
+
+
 def test_explicit_confirmation_only_blocks_marked_events():
     result = RuntimeResult(
         final_text="",
