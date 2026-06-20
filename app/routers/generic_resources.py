@@ -39,6 +39,8 @@ MAX_MEMORY_CONTENT_BYTES = 100 * 1024
 MAX_MEMORY_PATH_BYTES = 1024
 DEPLOYMENT_RUN_TRIGGER_TYPES = {"manual", "schedule"}
 MEMORY_VIEWS = {"basic", "full"}
+USER_PROFILE_RELATIONSHIPS = {"external", "internal", "resold"}
+MAX_USER_PROFILE_FIELD_CHARS = 255
 
 
 @router.post("/v1/vaults", status_code=201)
@@ -1867,8 +1869,27 @@ def _normalize_user_profile_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     normalized.setdefault("relationship", "external")
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
+    _validate_user_profile_data(normalized)
     normalized.setdefault("trust_grants", {})
     return normalized
+
+
+def _validate_user_profile_data(data: dict[str, Any]) -> None:
+    relationship = data.get("relationship")
+    if relationship not in USER_PROFILE_RELATIONSHIPS:
+        raise HTTPException(status_code=422, detail="user_profile relationship must be external, internal, or resold")
+
+    for field in ("external_id", "name"):
+        value = data.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise HTTPException(status_code=422, detail=f"user_profile {field} must be a string")
+        if len(value) > MAX_USER_PROFILE_FIELD_CHARS:
+            raise HTTPException(status_code=422, detail=f"user_profile {field} must be at most 255 characters")
+
+    if relationship == "resold" and not data.get("name"):
+        raise HTTPException(status_code=422, detail="user_profile name is required when relationship is resold")
 
 
 def _user_profile_response(resource) -> dict[str, Any]:

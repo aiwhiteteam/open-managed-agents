@@ -405,3 +405,50 @@ async def test_user_profile_enrollment_url_persists_hashed_token(client):
     assert stored["user_profile_id"] == profile["id"]
     assert stored["token_hash"]
     assert token not in str(stored)
+
+
+async def test_user_profile_relationship_validation(client):
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=TEST_HEADERS,
+        json={"relationship": "partner", "external_id": "user-invalid"},
+    )
+    assert response.status_code == 422
+    assert "relationship" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=TEST_HEADERS,
+        json={"relationship": "resold", "external_id": "company-missing-name"},
+    )
+    assert response.status_code == 422
+    assert "resold" in response.json()["error"]["message"]
+
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=TEST_HEADERS,
+        json={"relationship": "resold", "external_id": "company-1", "name": "Acme Inc"},
+    )
+    assert response.status_code == 201, response.text
+    profile = response.json()
+    assert profile["relationship"] == "resold"
+    assert profile["name"] == "Acme Inc"
+
+    response = await client.post(
+        f"/v1/user_profiles/{profile['id']}",
+        headers=TEST_HEADERS,
+        json={"name": ""},
+    )
+    assert response.status_code == 422
+    assert "resold" in response.json()["error"]["message"]
+
+
+async def test_user_profile_field_length_validation(client):
+    response = await client.post(
+        "/v1/user_profiles",
+        headers=TEST_HEADERS,
+        json={"relationship": "external", "external_id": "x" * 256},
+    )
+
+    assert response.status_code == 422
+    assert "external_id" in response.json()["error"]["message"]

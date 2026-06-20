@@ -1235,6 +1235,14 @@ async def test_anthropic_sdk_user_profiles_contract():
         assert profile.relationship == "external"
         assert profile.trust_grants == {}
 
+        resold_profile = await client.beta.user_profiles.create(
+            relationship="resold",
+            external_id="company-123",
+            name="SDK Resold Company",
+        )
+        assert resold_profile.relationship == "resold"
+        assert resold_profile.name == "SDK Resold Company"
+
         retrieved = await client.beta.user_profiles.retrieve(profile.id)
         assert retrieved.id == profile.id
 
