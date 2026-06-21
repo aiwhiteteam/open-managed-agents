@@ -48,7 +48,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 - Replace inline Postgres work-queue consumer with Cloud Tasks/PubSub deployment and fencing locks.
 - Implement true resumable OpenAI Agents SDK `RunState` continuation. SDK `RunState.to_json()` snapshots are persisted when available, but reconstructing the agent and resuming through `RunState.from_json()` is still TODO.
 - Keep expanding OpenAI Agents SDK stream mapping. Run-item events for messages, tool calls/results, MCP approvals, reasoning, handoffs, and agent updates have local coverage; raw response deltas and the exact full Claude event union remain TODO.
-- Keep expanding runtime integration tests. API-level session turn coverage exists for a mocked OpenAI-compatible runtime and provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers; wire-level mocked OpenAI SDK HTTP endpoint coverage remains TODO.
+- Keep expanding runtime integration tests. API-level session turn coverage exists for a mocked OpenAI-compatible runtime, provider resolution/capability coverage exists for DeepSeek, MiniMax, and custom providers, and wire-level mocked OpenAI SDK HTTP endpoint coverage verifies provider base URL/auth plus unsupported-parameter filtering.
 - Persist and resume real OpenAI Agents SDK HITL/tool confirmation run state.
 - Keep session `rescheduling` behavior for transient failures covered, including retry windows and capped attempts. Durable retry execution still belongs to the production queue provider.
 - Expand session state-machine tests for worker crashes and queued continuation batches. `user.interrupt` single-event handling while active has local coverage.
