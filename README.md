@@ -23,6 +23,15 @@ from open_managed_agents import create_app
 app = create_app(auth_provider=HostedOrgAuthProvider())
 ```
 
+## Product Shapes
+
+This repo is both:
+
+- An OSS self-hosted web service with Docker/deploy templates.
+- An importable core package for a future hosted/private org SaaS layer.
+
+The hosted layer should import `open_managed_agents.create_app(...)` and inject hosted auth/tenant/quota/secret/sandbox providers. It should not fork or rewrite core. Core only knows `workspace_id`; organizations, members, RBAC, SSO, billing, metering, and hosted admin UI belong outside this repo.
+
 ## Local Run
 
 ```bash
@@ -99,6 +108,7 @@ This service follows the `votrix-backend` split:
 - Memory stores are relational data: memory paths, content, metadata, optimistic versions, and version history live in Postgres.
 - S3-compatible object storage stores object bytes under `workspaces/{workspace_id}/...`: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
 - Configure object bytes with `S3_*` settings. Cloudflare R2 works through the same S3-compatible path by setting `S3_ENDPOINT_URL` to the R2 S3 endpoint.
+- Supabase is only a Postgres-compatible relational option here. Do not use Supabase Storage for object bytes in the default architecture; use S3-compatible storage instead.
 
 ## Minimal Flow
 
