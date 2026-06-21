@@ -13,8 +13,10 @@ Object storage is not the source of truth for memory records. S3-compatible stor
 - String paths follow the Anthropic SDK contract: they must start with `/`, be at most 1024 bytes, contain no empty, `.`, or `..` segments, contain no control/format characters, and already be NFC-normalized.
 - Listing with `depth` returns list-time `memory_prefix` rollups for directories deeper than the requested depth. Prefixes are not stored resources and have no lifecycle.
 - Individual memory content is capped at 100KB, and each store is capped at 2000 live memories.
-- Updates may pass `if_version` or `expected_version`; stale values return `409`.
-- Every create, update, and delete creates an immutable memory version; versions survive after their memory is deleted.
+- Updates may pass official `precondition: {type: "content_sha256", content_sha256: "..."}` or OSS-compatible `if_version` / `expected_version`; stale values return `409` unless the requested content/path already matches the stored memory, in which case the update is treated as an idempotent no-op.
+- Every non-no-op create, update, and delete creates an immutable memory version; versions survive after their memory is deleted.
+- Deletes may pass `expected_content_sha256`; stale values return `409`.
+- Deleted memory-version responses preserve the deleted path but return `null` for `content`, `content_sha256`, and `content_size_bytes`.
 - Redaction removes the snapshot `content` from the targeted memory version. The current live head version cannot be redacted.
 - Archived stores remain readable, but reject writes and cannot be attached to new sessions.
 

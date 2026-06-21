@@ -49,6 +49,26 @@ async def test_memory_store_name_and_description_validation(client):
     assert "control" in response.json()["error"]["message"]
 
 
+async def test_memory_routes_use_typed_openapi_request_models(client):
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200, response.text
+    spec = response.json()
+
+    schemas = spec["components"]["schemas"]
+    for schema_name in (
+        "MemoryStoreCreateRequest",
+        "MemoryStoreUpdateRequest",
+        "MemoryCreateRequest",
+        "MemoryUpdateRequest",
+    ):
+        assert schema_name in schemas
+
+    create_memory_schema = spec["paths"]["/v1/memory_stores/{memory_store_id}/memories"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]
+    assert create_memory_schema["$ref"].endswith("/MemoryCreateRequest")
+
+
 async def test_memory_path_uniqueness_lookup_and_versions(client):
     store = await _create_store(client)
 
@@ -145,6 +165,56 @@ async def test_memory_path_uniqueness_lookup_and_versions(client):
     assert [version["version"] for version in versions] == [3, 2, 1]
     assert versions[0]["actor"] == "operator"
     assert versions[0]["operation"] == "modified"
+
+
+async def test_memory_create_requires_content(client):
+    store = await _create_store(client)
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "/customers/acme"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "content" in response.json()["error"]["message"]
+
+
+async def test_memory_update_noop_and_stale_precondition_match_do_not_create_version(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "/customers/acme", "content": "same content"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={
+            "content": "same content",
+            "precondition": {"type": "content_sha256", "content_sha256": "stale"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["version"] == 1
+
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        json={"content": "same content"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["version"] == 1
+
+    response = await client.get(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}/versions",
+        headers=TEST_HEADERS,
+    )
+    assert response.status_code == 200, response.text
+    assert [version["version"] for version in response.json()["data"]] == [1]
 
 
 async def test_memory_path_validation_matches_sdk_contract(client):
@@ -304,7 +374,10 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     assert response.status_code == 200, response.text
     versions = response.json()["data"]
     assert [version["operation"] for version in versions] == ["deleted", "created"]
-    assert versions[0]["content"] == "delete me"
+    assert versions[0]["content"] is None
+    assert versions[0]["content_sha256"] is None
+    assert versions[0]["content_size_bytes"] is None
+    assert versions[0]["path"] == "/customers/acme"
 
     response = await client.get(
         f"/v1/memory_stores/{store['id']}/memory_versions/{versions[0]['id']}",
@@ -312,6 +385,32 @@ async def test_memory_delete_creates_surviving_deleted_version(client):
     )
     assert response.status_code == 200, response.text
     assert response.json()["operation"] == "deleted"
+
+
+async def test_memory_delete_expected_content_sha256_precondition(client):
+    store = await _create_store(client)
+    response = await client.post(
+        f"/v1/memory_stores/{store['id']}/memories",
+        headers=TEST_HEADERS,
+        json={"path": "/customers/acme", "content": "delete me"},
+    )
+    assert response.status_code == 201, response.text
+    memory = response.json()
+
+    response = await client.delete(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        params={"expected_content_sha256": "stale"},
+    )
+    assert response.status_code == 409
+
+    response = await client.delete(
+        f"/v1/memory_stores/{store['id']}/memories/{memory['id']}",
+        headers=TEST_HEADERS,
+        params={"expected_content_sha256": memory["content_sha256"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["type"] == "memory_deleted"
 
 
 async def test_memory_version_list_rejects_unknown_operation(client):

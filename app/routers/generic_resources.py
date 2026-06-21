@@ -20,6 +20,12 @@ from app.db.queries import sessions as sessions_q
 from app.event_validation import validate_system_message_batch, validate_user_define_outcome_event
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
+from app.models.memory_stores import (
+    MemoryCreateRequest,
+    MemoryStoreCreateRequest,
+    MemoryStoreUpdateRequest,
+    MemoryUpdateRequest,
+)
 from app.models.resources import GenericBody, deleted_response, resource_to_response
 from app.pagination import filter_created_at, normalize_sort_order, paginate, sort_by_created_at
 from app.session_resources import create_session_resource
@@ -167,7 +173,7 @@ def _credential_validation_payload(credential, *, vault_id: str) -> dict[str, An
 
 
 @router.post("/v1/memory_stores", status_code=201)
-async def create_memory_store(body: GenericBody, db: AsyncSession = Depends(get_session)):
+async def create_memory_store(body: MemoryStoreCreateRequest, db: AsyncSession = Depends(get_session)):
     return await _create_top_level(db, "memory_store", body.model_dump(mode="json"))
 
 
@@ -198,12 +204,16 @@ async def retrieve_memory_store(memory_store_id: str, db: AsyncSession = Depends
 
 
 @router.post("/v1/memory_stores/{memory_store_id}")
-async def update_memory_store(memory_store_id: str, body: GenericBody, db: AsyncSession = Depends(get_session)):
+async def update_memory_store(
+    memory_store_id: str,
+    body: MemoryStoreUpdateRequest,
+    db: AsyncSession = Depends(get_session),
+):
     return await _update(
         db,
         memory_store_id,
         "memory_store",
-        body.model_dump(mode="json"),
+        body.model_dump(mode="json", exclude_unset=True),
     )
 
 
@@ -220,14 +230,14 @@ async def archive_memory_store(memory_store_id: str, db: AsyncSession = Depends(
 @router.post("/v1/memory_stores/{memory_store_id}/memories", status_code=201)
 async def create_memory(
     memory_store_id: str,
-    body: GenericBody,
+    body: MemoryCreateRequest,
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     view = _normalize_memory_view(view)
     await _must_write_memory_store(db, memory_store_id)
     await _ensure_memory_store_capacity(db, memory_store_id)
-    data = _memory_payload(body.model_dump(mode="json"))
+    data = _memory_payload(body.model_dump(mode="json", exclude_unset=True))
     existing = await _find_memory_by_path(db, memory_store_id, data["path_key"])
     if existing is not None:
         raise HTTPException(status_code=409, detail="Memory path already exists in this memory store")
@@ -327,13 +337,13 @@ async def retrieve_memory(
 async def update_memory(
     memory_store_id: str,
     memory_id: str,
-    body: GenericBody,
+    body: MemoryUpdateRequest,
     view: str | None = None,
     db: AsyncSession = Depends(get_session),
 ):
     view = _normalize_memory_view(view)
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
-    update = body.model_dump(mode="json")
+    update = body.model_dump(mode="json", exclude_unset=True)
     expected_version = update.pop("if_version", update.pop("expected_version", None))
     precondition = update.pop("precondition", None)
     current_version = int(memory.data.get("version") or 1)
@@ -342,8 +352,12 @@ async def update_memory(
     if isinstance(precondition, dict) and precondition.get("type") == "content_sha256":
         expected_sha = precondition.get("content_sha256")
         if expected_sha and expected_sha != memory.data.get("content_sha256"):
+            if _memory_requested_state_matches_current(memory.data, update):
+                return _resource_response(memory, view=view)
             raise HTTPException(status_code=409, detail="Memory content precondition failed")
     data = _merge_memory_data(memory.data, update)
+    if not _memory_has_material_change(memory.data, data):
+        return _resource_response(memory, view=view)
     if data["path_key"] != memory.data.get("path_key"):
         existing = await _find_memory_by_path(db, memory_store_id, data["path_key"])
         if existing is not None and existing.id != memory.id:
@@ -364,9 +378,16 @@ async def update_memory(
 
 
 @router.delete("/v1/memory_stores/{memory_store_id}/memories/{memory_id}")
-async def delete_memory(memory_store_id: str, memory_id: str, db: AsyncSession = Depends(get_session)):
+async def delete_memory(
+    memory_store_id: str,
+    memory_id: str,
+    expected_content_sha256: str | None = None,
+    db: AsyncSession = Depends(get_session),
+):
     await _must_write_memory_store(db, memory_store_id)
     memory = await _must_exist(db, memory_id, "memory", parent_id=memory_store_id)
+    if expected_content_sha256 is not None and expected_content_sha256 != memory.data.get("content_sha256"):
+        raise HTTPException(status_code=409, detail="Memory content precondition failed")
     data = dict(memory.data or {})
     data["version"] = int(data.get("version") or 1) + 1
     data["updated_by"] = str(data.get("updated_by") or "api")
@@ -1428,6 +1449,38 @@ def _merge_memory_data(existing: dict[str, Any] | None, update: dict[str, Any]) 
     return merged
 
 
+def _memory_requested_state_matches_current(existing: dict[str, Any] | None, update: dict[str, Any]) -> bool:
+    current = dict(existing or {})
+    requested_path = current.get("path")
+    if "path" in update:
+        requested_path = _normalize_memory_path(update["path"])
+
+    requested_content = "" if current.get("content") is None else str(current.get("content"))
+    if "content" in update:
+        requested_content = "" if update["content"] is None else str(update["content"])
+
+    current_path = _normalize_memory_path(current.get("path"))
+    current_content = "" if current.get("content") is None else str(current.get("content"))
+    return requested_path == current_path and requested_content == current_content
+
+
+def _memory_has_material_change(existing: dict[str, Any] | None, merged: dict[str, Any]) -> bool:
+    ignored = {
+        "content_sha256",
+        "content_size_bytes",
+        "created_at",
+        "created_by",
+        "memory_version_id",
+        "session_id",
+        "updated_at",
+        "updated_by",
+        "version",
+    }
+    existing_material = {key: value for key, value in dict(existing or {}).items() if key not in ignored}
+    merged_material = {key: value for key, value in merged.items() if key not in ignored}
+    return existing_material != merged_material
+
+
 async def _must_write_memory_store(db: AsyncSession, memory_store_id: str):
     store = await _must_exist(db, memory_store_id, "memory_store")
     if store.archived_at is not None:
@@ -1593,13 +1646,19 @@ def _memory_version_response(resource, *, view: str | None = None) -> dict[str, 
     redacted = bool(data.get("redacted") or data.get("redacted_at"))
     response["memory_store_id"] = data.get("memory_store_id") or snapshot.get("memory_store_id")
     response["memory_id"] = data.get("memory_id") or resource.parent_id
-    response["operation"] = _memory_version_operation(data.get("operation"))
+    operation = _memory_version_operation(data.get("operation"))
+    response["operation"] = operation
     response["created_by"] = data.get("created_by") or _api_actor(str(data.get("actor") or "api"))
     response.pop("session_id", None)
     response["redacted_at"] = data.get("redacted_at")
     if redacted:
         response["content"] = None
         response["path"] = None
+        response["content_sha256"] = None
+        response["content_size_bytes"] = None
+    elif operation == "deleted":
+        response["content"] = None
+        response["path"] = _normalize_memory_path(data.get("path") or snapshot.get("path"))
         response["content_sha256"] = None
         response["content_size_bytes"] = None
     else:

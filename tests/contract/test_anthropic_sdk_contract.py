@@ -1001,6 +1001,17 @@ async def test_anthropic_sdk_memory_stores_contract():
         assert updated_memory.content == updated_content
         assert updated_memory.content_sha256 == hashlib.sha256(updated_content.encode()).hexdigest()
 
+        noop_memory = await client.beta.memory_stores.memories.update(
+            memory.id,
+            memory_store_id=store.id,
+            content=updated_content,
+            precondition={"type": "content_sha256", "content_sha256": memory.content_sha256},
+            view="full",
+            **BETA_KWARG,
+        )
+        assert noop_memory.model_dump().get("version") == updated_memory.model_dump().get("version")
+        assert noop_memory.content == updated_content
+
         memories = [
             item
             async for item in client.beta.memory_stores.memories.list(
@@ -1079,6 +1090,7 @@ async def test_anthropic_sdk_memory_stores_contract():
         deleted_memory = await client.beta.memory_stores.memories.delete(
             memory.id,
             memory_store_id=store.id,
+            expected_content_sha256=updated_memory.content_sha256,
             **BETA_KWARG,
         )
         assert deleted_memory.id == memory.id
@@ -1095,7 +1107,10 @@ async def test_anthropic_sdk_memory_stores_contract():
             )
         ]
         assert [item.operation for item in post_delete_versions] == ["deleted", "modified", "created"]
-        assert post_delete_versions[0].content == updated_content
+        assert post_delete_versions[0].content is None
+        assert post_delete_versions[0].content_sha256 is None
+        assert post_delete_versions[0].content_size_bytes is None
+        assert post_delete_versions[0].path == "/customers/acme.md"
         retrieved_deleted_version = await client.beta.memory_stores.memory_versions.retrieve(
             post_delete_versions[0].id,
             memory_store_id=store.id,

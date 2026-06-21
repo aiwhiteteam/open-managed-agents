@@ -89,8 +89,8 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Memory Stores
 
-- Extract Memory Store routes into typed request/response models instead of the current generic-resource compatibility layer.
-- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. SDK-compatible slash-prefixed path validation, `depth` rollups as `memory_prefix` items, memory content size, per-store count limits, memory-version `api_key_id`/`session_id`/`operation`/`view` filters, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
+- Keep Memory Store routes typed at the FastAPI boundary. Create/update routes use Memory Store-specific request models and typed response models are defined, while the MVP still stores records through the generic `managed_resources` table.
+- Keep exact path and prefix lookups backed by indexed `managed_resources.name` as the stored `path_key`. SDK-compatible slash-prefixed path validation, required create content, `depth` rollups as `memory_prefix` items, memory content size, per-store count limits, no-op update behavior, stale precondition idempotency, delete `expected_content_sha256`, deleted-version response null content/hash/size, memory-version `api_key_id`/`session_id`/`operation`/`view` filters, deleted-version survival, live-head redact protection, and archived-store read-only behavior have local coverage.
 - Add semantic search/vector indexing if memories need retrieval beyond exact path and prefix lookup.
 - Keep mounted memory stores integrated into the runtime context builder. Session creation enforces the official 8 mounted stores limit and rejects new attachments to archived stores. Full semantic/vector retrieval tools remain TODO.
 

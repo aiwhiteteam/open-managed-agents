@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 
 
@@ -14,6 +16,18 @@ def test_legacy_uvicorn_entrypoint_still_exposes_app():
     from app.main import app
 
     assert isinstance(app, FastAPI)
+
+
+def test_core_does_not_import_anthropic_sdk():
+    repo_root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for package in ("app", "open_managed_agents"):
+        for path in (repo_root / package).rglob("*.py"):
+            text = path.read_text()
+            if "import anthropic" in text or "from anthropic" in text:
+                offenders.append(str(path.relative_to(repo_root)))
+
+    assert offenders == []
 
 
 class _HostedAuthProvider:
