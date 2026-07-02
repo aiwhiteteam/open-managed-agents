@@ -82,7 +82,7 @@ These are not just route coverage gaps. They are semantic contracts that can bec
 
 ## Vaults
 
-- Store credentials in KMS/Vault instead of the generic resource table.
+- Credential secret values are encrypted at rest with AES-256-GCM when `OMA_ENCRYPTION_KEY` is set; ciphertext carries an `enc:v1:` version prefix. KMS-backed key management and key rotation remain hosted-layer TODO.
 - Implement OAuth enrollment and real validation flows. The validation route persists last-validation metadata, but still does not perform real OAuth/MCP probing.
 - Implement credential refresh and webhook events.
 - Keep secret redaction in logs, API responses, OAuth refresh credential responses, and archive/delete purge paths covered. Secure secret storage still belongs in the KMS/Vault TODO above.

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     oma_openai_compatible_providers: Annotated[dict[str, dict[str, Any]], NoDecode] = Field(default_factory=dict)
     oma_public_base_url: str = "https://example.invalid"
     oma_worker_token: str = ""
+    oma_encryption_key: str = ""
 
     s3_endpoint_url: str = ""
     s3_access_key_id: str = ""

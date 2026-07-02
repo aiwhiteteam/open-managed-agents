@@ -106,6 +106,7 @@ This service follows the `votrix-backend` split:
 - Relational state uses `DATABASE_URL` and can point at any compatible Postgres deployment.
 - Core resources are scoped by `workspace_id`. OSS self-hosted defaults to `wrkspc_default`; hosted/private layers should resolve callers to a workspace through an injected auth provider.
 - Memory stores are relational data: memory paths, content, metadata, optimistic versions, and version history live in Postgres.
+- Vault credential secrets are encrypted at rest with AES-256-GCM when `OMA_ENCRYPTION_KEY` is set (base64-encoded 32 bytes; see `.env.example` for a generation command). Without a key, secrets are stored as plaintext, so set one for any non-local deployment.
 - S3-compatible object storage stores object bytes under `workspaces/{workspace_id}/...`: file uploads, skill zip archives, future session artifacts, bundle-like objects, and optional large memory attachments/snapshots if added later.
 - Configure object bytes with `S3_*` settings. Cloudflare R2 works through the same S3-compatible path by setting `S3_ENDPOINT_URL` to the R2 S3 endpoint.
 - Supabase is only a Postgres-compatible relational option here. Do not use Supabase Storage for object bytes in the default architecture; use S3-compatible storage instead.
@@ -196,4 +197,4 @@ The root `Dockerfile` is the source of truth for every platform. Provider-specif
 - `deploy/aws`: AWS ECS/Fargate Terraform reference for web and optional worker services.
 - `deploy/docker-compose`: Docker Compose for local integration, simple VPS, and self-hosted smoke tests.
 
-Set `DATABASE_URL`, `OPENAI_API_KEY`, optional `OMA_API_KEY`, and all `S3_*` values as platform secrets or environment variables. `DATABASE_URL` can point at Render/Railway/Fly Postgres, Cloud SQL, RDS, or any compatible Postgres deployment. Object bytes should point at S3-compatible object storage.
+Set `DATABASE_URL`, `OPENAI_API_KEY`, optional `OMA_API_KEY`, `OMA_ENCRYPTION_KEY`, and all `S3_*` values as platform secrets or environment variables. `DATABASE_URL` can point at Render/Railway/Fly Postgres, Cloud SQL, RDS, or any compatible Postgres deployment. Object bytes should point at S3-compatible object storage.

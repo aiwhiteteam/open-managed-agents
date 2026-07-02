@@ -20,6 +20,7 @@ from app.db.queries import sessions as sessions_q
 from app.event_validation import validate_system_message_batch, validate_user_define_outcome_event
 from app.metadata import merge_metadata, normalize_metadata
 from app.models.common import ListResponse, utcnow
+from app.secret_cipher import encrypt_secret_values, is_secret_key
 from app.models.memory_stores import (
     MemoryCreateRequest,
     MemoryStoreCreateRequest,
@@ -1094,7 +1095,7 @@ def _normalize_credential_data(data: dict[str, Any]) -> dict[str, Any]:
     if "auth" not in normalized:
         auth_type = str(normalized.pop("type", "mcp_oauth"))
         normalized["auth"] = _legacy_credential_auth(auth_type, normalized)
-    normalized["auth"] = _normalize_credential_auth(normalized["auth"])
+    normalized["auth"] = encrypt_secret_values(_normalize_credential_auth(normalized["auth"]))
     normalized["metadata"] = normalize_metadata(normalized.get("metadata"))
     return normalized
 
@@ -1323,19 +1324,6 @@ def _credential_networking_response(value: Any) -> dict[str, Any]:
     return {"type": "unrestricted"}
 
 
-PURGE_SECRET_KEYS = {
-    "access_token",
-    "api_key",
-    "apikey",
-    "client_secret",
-    "password",
-    "private_key",
-    "refresh_token",
-    "secret_value",
-    "token",
-}
-
-
 def _purge_credential_secret_data(data: dict[str, Any] | None) -> dict[str, Any]:
     purged = _purge_secret_values(data or {})
     if isinstance(purged, dict):
@@ -1347,7 +1335,7 @@ def _purge_secret_values(value: Any) -> Any:
     if isinstance(value, dict):
         result: dict[str, Any] = {}
         for key, child in value.items():
-            if _should_purge_secret_key(key):
+            if is_secret_key(key):
                 result[key] = None
             else:
                 result[key] = _purge_secret_values(child)
@@ -1355,11 +1343,6 @@ def _purge_secret_values(value: Any) -> Any:
     if isinstance(value, list):
         return [_purge_secret_values(item) for item in value]
     return value
-
-
-def _should_purge_secret_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return normalized in PURGE_SECRET_KEYS or normalized.endswith("_token") or normalized.endswith("_api_key")
 
 
 def _normalize_memory_store_data(data: dict[str, Any]) -> dict[str, Any]:
